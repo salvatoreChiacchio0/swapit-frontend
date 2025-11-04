@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { useApiCall, apiClient } from "@/lib/api"
 import { MessageSquare, Send, Search, MoreVertical, Phone, Video, Paperclip, Smile, Circle } from "lucide-react"
 import { getAuth, onAuthStateChanged } from "firebase/auth"
-import { connectChat, onReceive, sendMessage as sendWsMessage, disconnectChat } from "@/lib/chatClient"
+import { connectChat, onReceive, sendMessage as sendWsMessage, disconnectChat, getSocket } from "@/lib/chatClient"
 import { getUserChats } from "@/lib/chatApi"
 
 const mockConversations = [
@@ -155,6 +155,7 @@ export function ChatSection() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const socketConnectedRef = useRef<boolean>(false);
   const selectedConversationRef = useRef<Conversation | null>(null);
+  const idTokenRef = useRef<string | null>(null);
 
   // Osserva lo stato Firebase: quando loggato, prendi uid e idToken
   useEffect(() => {
@@ -179,10 +180,24 @@ export function ChatSection() {
   }, []);
 
   // Helper per immagini profilo: se base64 senza prefix, aggiunge data:image/jpeg;base64,
+  // Gestisce anche il caso in cui il backend restituisce la stringa data URL codificata in base64
   function buildImageSrc(src?: string): string {
     if (!src) return "/placeholder.svg";
     const lower = src.toLowerCase();
     if (lower.startsWith("http://") || lower.startsWith("https://") || lower.startsWith("data:")) return src;
+    
+    // Il backend potrebbe restituire la stringa data URL codificata in base64
+    // Prova a decodificarla per vedere se contiene un data URL
+    try {
+      const decoded = atob(src);
+      if (decoded.startsWith("data:image")) {
+        return decoded;
+      }
+    } catch (e) {
+      // Se la decodifica fallisce, non è base64 valido o non è un data URL codificato
+      // Continua con la logica normale
+    }
+    
     return `data:image/jpeg;base64,${src}`;
   }
 
@@ -254,42 +269,169 @@ export function ChatSection() {
     } catch {}
   };
 
+  // Aggiorna il ref quando idToken cambia
+  useEffect(() => {
+    idTokenRef.current = idToken;
+  }, [idToken]);
+
   // Connessione socket autenticata
   useEffect(() => {
-    if (!idToken) return;
+    if (!idToken || !userId) {
+      // Se non c'è token, disconnetti
+      if (socketConnectedRef.current) {
+        disconnectChat();
+        socketConnectedRef.current = false;
+      }
+      return;
+    }
+    
+    let isMounted = true;
+    
     (async () => {
       try {
-        await connectChat();
+        const socket = await connectChat();
+        if (!isMounted) return;
+        
+        console.log('Socket connected:', socket.connected, 'Socket ID:', socket.id);
+        
         socketConnectedRef.current = true;
         await refetchChats();
-        onReceive((incoming: any) => {
+        
+        // Rimuovi handler precedenti e registra il nuovo
+        socket.off("receive"); // Rimuovi tutti i listener precedenti
+        
+        // Aggiungi listener per eventi di connessione/disconnessione per debug
+        socket.on("connect", () => {
+          console.log('Socket connected event:', socket.id);
+        });
+        
+        socket.on("disconnect", (reason) => {
+          console.log('Socket disconnected:', reason);
+        });
+        
+        socket.on("connect_error", (error) => {
+          console.error('Socket connection error:', error);
+        });
+        
+        // Handler principale per ricevere messaggi
+        socket.on("receive", (incoming: any) => {
+          console.log('Received message from socket:', incoming);
+          if (!isMounted || !idTokenRef.current) {
+            console.log('Ignoring message - component unmounted or no token');
+            return;
+          }
           const message = {
             ...incoming,
             timestamp: incoming?.timestamp ?? new Date(),
             isFromMe: incoming?.senderId === userId,
           };
+          console.log('Processing message:', message, 'Current userId:', userId);
+          
+          // Aggiorna sempre le conversazioni (anche se non è la conversazione selezionata)
+          setConversations((prev) => {
+            const updated = prev.map(c => {
+              if (c.userId === message.senderId || c.userId === message.receiverId) {
+                // Controlla se il messaggio esiste già (evita duplicati)
+                const exists = c.messages.some(m => 
+                  m.id === message.id || 
+                  (m.content === message.content && 
+                   m.senderId === message.senderId && 
+                   String(m.timestamp) === String(message.timestamp))
+                );
+                if (!exists) {
+                  return { ...c, messages: [...c.messages, message] };
+                }
+                return c;
+              }
+              return c;
+            });
+            
+            // Se la conversazione non esiste ancora, creala
+            const conversationExists = updated.some(c => 
+              c.userId === message.senderId || c.userId === message.receiverId
+            );
+            if (!conversationExists && message.senderId !== userId) {
+              updated.push({
+                userId: message.senderId,
+                messages: [message]
+              });
+            }
+            
+            return updated;
+          });
+          
+          // Se la conversazione corrente corrisponde, aggiungi anche ai messaggi visibili
           const current = selectedConversationRef.current;
           if (current && (message.senderId === current.userId || message.receiverId === current.userId)) {
-            setMessages((prev) => [...prev, message]);
+            console.log('Adding message to current conversation');
+            setMessages((prev) => {
+              // Controlla se il messaggio esiste già (evita duplicati)
+              // Se è un messaggio che abbiamo inviato, sostituisci quello ottimistico
+              const existingIndex = prev.findIndex(m => 
+                m.id === message.id || 
+                (m.id?.toString().startsWith('temp-') && 
+                 m.content === message.content && 
+                 m.senderId === message.senderId &&
+                 Math.abs(new Date(m.timestamp).getTime() - new Date(message.timestamp).getTime()) < 5000)
+              );
+              
+              if (existingIndex >= 0) {
+                // Sostituisci il messaggio esistente (rimuovi ottimistico, aggiungi quello dal server)
+                const updated = [...prev];
+                updated[existingIndex] = message;
+                return updated;
+              } else {
+                // Nuovo messaggio
+                return [...prev, message];
+              }
+            });
+          } else if (message.senderId === userId) {
+            // Se abbiamo inviato un messaggio ma non è la conversazione corrente,
+            // rimuovi comunque il messaggio ottimistico dalle conversazioni
+            setConversations((prev) => prev.map(c => {
+              if (c.userId === message.receiverId) {
+                return {
+                  ...c,
+                  messages: c.messages.map(m => {
+                    if (m.id?.toString().startsWith('temp-') && 
+                        m.content === message.content && 
+                        m.senderId === message.senderId) {
+                      return message; // Sostituisci con quello dal server
+                    }
+                    return m;
+                  }).filter(m => {
+                    // Rimuovi duplicati
+                    if (m.id?.toString().startsWith('temp-')) {
+                      return !c.messages.some(existing => 
+                        existing.id === message.id && 
+                        existing.content === message.content
+                      );
+                    }
+                    return true;
+                  })
+                };
+              }
+              return c;
+            }));
           }
-          setConversations((prev) => prev.map(c => {
-            if (c.userId === message.senderId || c.userId === message.receiverId) {
-              return { ...c, messages: [...c.messages, message] };
-            }
-            return c;
-          }))
         });
+        
+        console.log('Socket receive handler registered');
       } catch (e) {
-        console.warn('Chat connect failed', e);
+        console.error('Chat connect failed', e);
+        socketConnectedRef.current = false;
       }
     })();
+    
     return () => {
-      if (!idToken && socketConnectedRef.current) {
+      isMounted = false;
+      // Disconnette solo se il token è diventato null (logout)
+      if (!idTokenRef.current && socketConnectedRef.current) {
         disconnectChat();
         socketConnectedRef.current = false;
       }
     };
-  }, [idToken]);
+  }, [idToken, userId]);
 
   // Search utenti: usa swapit-be già incapsulato in apiClient.getUsers()
   useEffect(() => {
@@ -318,25 +460,41 @@ export function ChatSection() {
 
   const handleSendMessage = async () => {
     if (newMessage.trim() && selectedConversation && userId) {
+      const content = newMessage;
+      setNewMessage("");
+      
+      // Aggiungi messaggio ottimistico (verrà sostituito quando arriva dal server)
+      const tempId = `temp-${Date.now()}`;
       const optimistic = {
+        id: tempId,
         senderId: userId,
         receiverId: selectedConversation.userId,
-        content: newMessage,
+        content: content,
         timestamp: new Date(),
         isFromMe: true,
       } as any;
+      
+      console.log('Sending message optimistically:', optimistic);
+      
       setMessages((prev) => [...prev, optimistic]);
       setConversations((prev) => prev.map(c =>
         c.userId === selectedConversation.userId
         ? { ...c, messages: [...c.messages, optimistic] }
         : c
       ));
-      const content = newMessage;
-      setNewMessage("");
+      
       try {
         await sendWsMessage(selectedConversation.userId, content);
+        console.log('Message sent via socket');
       } catch (e) {
         console.error('send failed', e);
+        // Rimuovi il messaggio ottimistico se l'invio fallisce
+        setMessages((prev) => prev.filter(m => m.id !== tempId));
+        setConversations((prev) => prev.map(c =>
+          c.userId === selectedConversation.userId
+          ? { ...c, messages: c.messages.filter(m => m.id !== tempId) }
+          : c
+        ));
       }
     }
   };

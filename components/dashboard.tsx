@@ -7,6 +7,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "@/hooks/use-auth"
 import { useApiCall, apiClient } from "@/lib/api"
+import { normalizeProfilePicture } from "@/lib/utils"
 import {
   Users,
   Calendar,
@@ -29,7 +30,6 @@ import { SwapProposals } from "@/components/swap-proposals"
 import { RatingModal } from "@/components/rating-modal"
 import { CreateSwapModal } from "@/components/create-swap-modal"
 import { ChatSection } from "@/components/chat-section"
-import { Notifications } from "@/components/notifications"
 
 export function Dashboard() {
   const { user, logout } = useAuth()
@@ -41,20 +41,49 @@ export function Dashboard() {
   const [createSwapModalOpen, setCreateSwapModalOpen] = useState(false)
   const [sessionToRate, setSessionToRate] = useState<any>(null)
 
+    const [refreshKey, setRefreshKey] = useState(0)
+
+  // Fetch both sent and received proposals
   const {
-    data: proposals,
-    loading: proposalsLoading,
-    error: proposalsError,
+    data: sentProposals,
+    loading: sentLoading,
+    error: sentError,
   } = useApiCall(
-    () => (user ? apiClient.getSwapProposalsByRequestUser(user.uid) : Promise.resolve([])),
-    [user?.uid],
+    () => (user ? apiClient.getSwapProposalsByRequestUser(user.uid) : Promise.resolve([])),                                                                     
+    [user?.uid, refreshKey],
+  )
+  
+  const {
+    data: receivedProposals,
+    loading: receivedLoading,
+    error: receivedError,
+  } = useApiCall(
+    () => (user ? apiClient.getSwapProposalsByOfferUser(user.uid) : Promise.resolve([])),                                                                     
+    [user?.uid, refreshKey],
   )
 
+  // Fetch skills data
+  const { data: skills } = useApiCall(() => apiClient.getSkills(), [])
+
+  // Combine all proposals
+  const allProposals = [...(sentProposals || []), ...(receivedProposals || [])]
+
+  // Fetch feedbacks received by the user
   const {
-    data: feedbacks,
-    loading: feedbacksLoading,
-    error: feedbacksError,
-  } = useApiCall(() => (user ? apiClient.getFeedbacksByReviewed(user.uid) : Promise.resolve([])), [user?.uid])
+    data: feedbacksReceived,
+    loading: feedbacksReceivedLoading,
+    error: feedbacksReceivedError,
+  } = useApiCall(() => (user ? apiClient.getFeedbacksByReviewed(user.uid) : Promise.resolve([])), [user?.uid, refreshKey])
+  
+  // Fetch feedbacks given by the user
+  const {
+    data: feedbacksGiven,
+    loading: feedbacksGivenLoading,
+    error: feedbacksGivenError,
+  } = useApiCall(() => (user ? apiClient.getFeedbacksByReviewer(user.uid) : Promise.resolve([])), [user?.uid, refreshKey])
+  
+  // Combine both for convenience
+  const allFeedbacks = [...(feedbacksReceived || []), ...(feedbacksGiven || [])]
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -70,24 +99,64 @@ export function Dashboard() {
     return <ProfileSetup />
   }
 
-  const handleSubmitRating = async (rating: number, feedback: string) => {
-    if (!sessionToRate || !user) return
+    const handleSubmitRating = async (rating: number, feedback: string) => {      
+    if (!sessionToRate || !user || !sessionToRate.partner?.id) {
+      console.error("Missing data for rating submission:", { sessionToRate, user })
+      return
+    }
 
     try {
-      await apiClient.createFeedback({
+      const feedbackData = {
         rating,
         review: feedback,
         reviewerUid: user.uid,
-        reviewedUid: sessionToRate.partnerId,
-      })
+        reviewedUid: sessionToRate.partner.id,
+      }
+      console.log("Submitting feedback:", feedbackData)
+      
+      await apiClient.createFeedback(feedbackData)
       console.log("Rating submitted successfully")
+      
+      // Refresh proposals to show updated data
+      setRefreshKey((prev) => prev + 1)
+      setRatingModalOpen(false)
+      setSessionToRate(null)
     } catch (error) {
       console.error("Failed to submit rating:", error)
+      alert(`Failed to submit rating: ${error instanceof Error ? error.message : "Unknown error"}`)
     }
   }
 
-  const openRatingModal = (session: any) => {
-    setSessionToRate(session)
+  const openRatingModal = (proposal: any) => {
+    // Transform proposal to the format expected by RatingModal
+    if (!proposal.receiver || !proposal.receiver.uid) {
+      alert("Partner information is not available. Please try again in a moment.")
+      return
+    }
+    
+    // Determine which skill was taught and which was learned based on proposal type
+    const skillTaught = proposal.isSent
+      ? proposal.skillOffered?.label || "Skill Offered"
+      : proposal.skillRequested?.label || "Skill Requested"
+    
+    const skillLearned = proposal.isSent
+      ? proposal.skillRequested?.label || "Skill Requested"
+      : proposal.skillOffered?.label || "Skill Offered"
+    
+    const sessionData = {
+      id: proposal.id.toString(),
+      partner: {
+        id: proposal.receiver.uid,
+        name: proposal.receiver.username || "Unknown User",
+        avatar: normalizeProfilePicture(proposal.receiver.profilePicture) || "/placeholder.svg",
+      },
+      skillTaught,
+      skillLearned,
+      date: proposal.date,
+    }
+    
+    console.log("Opening rating modal with session data:", sessionData)
+    setSessionToRate(sessionData)
     setRatingModalOpen(true)
   }
 
@@ -99,20 +168,107 @@ export function Dashboard() {
     })
   }
 
-  const formatTime = (timeString: string) => {
-    return new Date(`2000-01-01T${timeString}`).toLocaleTimeString("en-US", {
+    const formatTime = (timeString: string) => {
+    return new Date(`2000-01-01T${timeString}`).toLocaleTimeString("en-US", { 
       hour: "numeric",
       minute: "2-digit",
       hour12: true,
     })
   }
 
+  
+
+  // Helper function to check if user has already rated a proposal
+  const hasUserRatedProposal = (proposal: any) => {
+    if (!user || !feedbacksGiven || !proposal.receiver?.uid) return false
+    return feedbacksGiven.some((f: any) => f.reviewedUid === proposal.receiver.uid)                                                                             
+  }
+
+  // State for enriched proposals with user and skill data
+  const [enrichedProposals, setEnrichedProposals] = useState<any[]>([])
+  const [loadingUsers, setLoadingUsers] = useState(false)
+
+  // Enrich proposals with user and skill data
+  useEffect(() => {
+    if (!sentProposals || !receivedProposals || !skills) return
+
+    const enrichProposals = async () => {
+      // Combine proposals
+      const allProposals = [...(sentProposals || []), ...(receivedProposals || [])]
+      
+      // Collect unique user UIDs and skill IDs
+      const userUids = new Set<string>()
+      const skillIds = new Set<number>()
+      
+      allProposals.forEach((p: any) => {
+        userUids.add(p.requestUserUid)
+        userUids.add(p.offerUserUid)
+        skillIds.add(p.skillOfferedId)
+        skillIds.add(p.skillRequestedId)
+      })
+
+      // Fetch all users and create a map
+      const userMap = new Map<string, any>()
+      setLoadingUsers(true)
+      try {
+        await Promise.all(
+          Array.from(userUids).map(async (uid) => {
+            try {
+              const userData = await apiClient.getUserById(uid)
+              userMap.set(uid, {
+                uid: userData.uid,
+                username: userData.username,
+                profilePicture: normalizeProfilePicture(userData.profilePicture),
+              })
+            } catch (e) {
+              console.error(`Failed to fetch user ${uid}:`, e)
+            }
+          })
+        )
+      } finally {
+        setLoadingUsers(false)
+      }
+
+      // Create skill map
+      const skillMap = new Map<number, any>()
+      skills.forEach((skill) => {
+        skillMap.set(skill.id, { id: skill.id, label: skill.label })
+      })
+
+      // Map proposals with enriched data
+      const enriched = allProposals.map((p: any) => {
+        const requestUser = userMap.get(p.requestUserUid)
+        const offerUser = userMap.get(p.offerUserUid)
+        const skillOffered = skillMap.get(p.skillOfferedId)
+        const skillRequested = skillMap.get(p.skillRequestedId)
+        
+        // Determine if this is a sent or received proposal from current user's perspective
+        const isSent = p.requestUserUid === user?.uid
+        const receiver = isSent ? offerUser : requestUser
+        
+        return {
+          ...p,
+          requestUser,
+          offerUser,
+          receiver,
+          skillOffered,
+          skillRequested,
+          isSent,
+        }
+      })
+
+      setEnrichedProposals(enriched)
+    }
+
+    enrichProposals()
+  }, [sentProposals, receivedProposals, skills, user?.uid])
+
   const upcomingProposals =
-    proposals?.filter((p: any) => p.status === "ACCEPTED" && new Date(p.date) >= new Date()) || []
+    enrichedProposals?.filter((p: any) => p.status === "ACCEPTED") || []
 
-  const completedProposals = proposals?.filter((p) => p.status === "COMPLETED") || []
+  const completedProposals = enrichedProposals?.filter((p) => p.status === "COMPLETED") || []
 
-  const recentActivity = (proposals || []).slice(0, 5).map((p: any) => ({
+  const recentActivity = (enrichedProposals || []).slice(0, 5).map((p: any) => ({
     id: p.id,
     type: p.status,
     message: `Proposal ${p.status.toLowerCase()}`,
@@ -120,7 +276,7 @@ export function Dashboard() {
   }))
 
   // Loading state
-  if (proposalsLoading || feedbacksLoading) {
+  if (sentLoading || receivedLoading || feedbacksReceivedLoading || feedbacksGivenLoading || loadingUsers) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -132,7 +288,7 @@ export function Dashboard() {
   }
 
   // Error state
-  if (proposalsError || feedbacksError) {
+  if (sentError || receivedError || feedbacksReceivedError || feedbacksGivenError) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <Card className="w-full max-w-md">
@@ -167,7 +323,7 @@ export function Dashboard() {
             </Button>
             <div className="flex items-center gap-2">
               <Avatar className="w-8 h-8">
-                <AvatarImage src={user.profilePicture || "/placeholder.svg"} />
+                <AvatarImage src={normalizeProfilePicture(user.profilePicture) || "/placeholder.svg"} />
                 <AvatarFallback>{user.username?.[0] || "U"}</AvatarFallback>
               </Avatar>
               <span className="font-medium">{user.username}</span>
@@ -184,12 +340,11 @@ export function Dashboard() {
           <TabsList className="grid w-full grid-cols-8">
             <TabsTrigger value="home">Home</TabsTrigger>
             <TabsTrigger value="matches">Find Matches</TabsTrigger>
-            <TabsTrigger value="proposals">Proposals</TabsTrigger>
-            <TabsTrigger value="sessions">Sessions</TabsTrigger>
-            <TabsTrigger value="chat">Chat</TabsTrigger>
-            <TabsTrigger value="notifications">Notifications</TabsTrigger>
-            <TabsTrigger value="profile">Profile</TabsTrigger>
-            <TabsTrigger value="stats">Stats</TabsTrigger>
+                          <TabsTrigger value="proposals">Proposals</TabsTrigger>
+              <TabsTrigger value="sessions">Sessions</TabsTrigger>
+              <TabsTrigger value="chat">Chat</TabsTrigger>
+              <TabsTrigger value="profile">Profile</TabsTrigger>
+              <TabsTrigger value="review-history">Review History</TabsTrigger>
           </TabsList>
 
           <TabsContent value="home" className="space-y-6">
@@ -208,7 +363,7 @@ export function Dashboard() {
             </div>
 
             {/* Quick Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Card>
                 <CardContent className="p-6">
                   <div className="flex items-center gap-2">
@@ -241,18 +396,7 @@ export function Dashboard() {
                     </div>
                   </div>
                 </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-center gap-2">
-                    <MessageSquare className="w-5 h-5 text-purple-500" />
-                    <div>
-                      <div className="text-2xl font-bold">0</div>
-                      <div className="text-sm text-gray-500">New Messages</div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                            </Card>
             </div>
 
             {/* Upcoming Sessions */}
@@ -349,26 +493,43 @@ export function Dashboard() {
                       </div>
                     ) : (
                       <div className="space-y-4">
-                        {upcomingProposals.map((proposal) => (
+                        {upcomingProposals.map((proposal: any) => (
                           <div key={proposal.id} className="flex items-center gap-4 p-4 border rounded-lg">
                             <Avatar className="w-12 h-12">
-                              <AvatarImage src={proposal.receiver.profilePicture || "/placeholder.svg"} />
+                              <AvatarImage src={normalizeProfilePicture(proposal.receiver?.profilePicture) || "/placeholder.svg"} />
                               <AvatarFallback>
-                                {(proposal.receiver.firstName?.[0] || "") + (proposal.receiver.lastName?.[0] || "")}
+                                {proposal.receiver?.firstName?.[0] || proposal.receiver?.username?.[0] || ""}
+                                {proposal.receiver?.lastName?.[0] || ""}
                               </AvatarFallback>
                             </Avatar>
                             <div className="flex-1">
                               <div className="font-medium">
-                                {proposal.receiver.firstName} {proposal.receiver.lastName}
+                                {proposal.receiver?.firstName && proposal.receiver?.lastName
+                                  ? `${proposal.receiver.firstName} ${proposal.receiver.lastName}`
+                                  : proposal.receiver?.username || "Unknown User"}
                               </div>
                               <div className="text-sm text-gray-600">
-                                Teaching:{" "}
-                                <span className="text-green-600 font-medium">{proposal.offeredSkill.label}</span> •
-                                Learning:{" "}
-                                <span className="text-blue-600 font-medium">{proposal.wantedSkill.label}</span>
+                                {proposal.offeredSkill?.label ? (
+                                  <>
+                                    Teaching:{" "}
+                                    <span className="text-green-600 font-medium">{proposal.offeredSkill.label}</span>
+                                    {proposal.wantedSkill?.label && " • "}
+                                  </>
+                                ) : null}
+                                {proposal.wantedSkill?.label ? (
+                                  <>
+                                    Learning:{" "}
+                                    <span className="text-blue-600 font-medium">{proposal.wantedSkill.label}</span>
+                                  </>
+                                ) : null}
+                                {!proposal.offeredSkill?.label && !proposal.wantedSkill?.label && "Session details"}
                               </div>
                               <div className="text-sm text-gray-500">
-                                {formatDate(proposal.proposedDateTime)} ({proposal.duration} minutes)
+                                {proposal.proposedDateTime
+                                  ? `${formatDate(proposal.proposedDateTime)}${proposal.duration ? ` (${proposal.duration} minutes)` : ""}`
+                                  : proposal.date
+                                  ? `${formatDate(proposal.date)}${proposal.startTime ? ` at ${formatTime(proposal.startTime)}` : ""}`
+                                  : "Date not available"}
                               </div>
                             </div>
                             <div className="flex gap-2">
@@ -396,31 +557,55 @@ export function Dashboard() {
                       </div>
                     ) : (
                       <div className="space-y-4">
-                        {completedProposals.map((proposal) => (
+                        {completedProposals.map((proposal: any) => (
                           <div key={proposal.id} className="flex items-center gap-4 p-4 border rounded-lg bg-green-50">
                             <Avatar className="w-12 h-12">
-                              <AvatarImage src={proposal.receiver.profilePicture || "/placeholder.svg"} />
+                              <AvatarImage src={normalizeProfilePicture(proposal.receiver?.profilePicture) || "/placeholder.svg"} />
                               <AvatarFallback>
-                                {(proposal.receiver.firstName?.[0] || "") + (proposal.receiver.lastName?.[0] || "")}
+                                {proposal.receiver?.firstName?.[0] || proposal.receiver?.username?.[0] || ""}
+                                {proposal.receiver?.lastName?.[0] || ""}
                               </AvatarFallback>
                             </Avatar>
                             <div className="flex-1">
                               <div className="font-medium">
-                                {proposal.receiver.firstName} {proposal.receiver.lastName}
+                                {proposal.receiver?.firstName && proposal.receiver?.lastName
+                                  ? `${proposal.receiver.firstName} ${proposal.receiver.lastName}`
+                                  : proposal.receiver?.username || "Unknown User"}
                               </div>
                               <div className="text-sm text-gray-600">
-                                Taught:{" "}
-                                <span className="text-green-600 font-medium">{proposal.offeredSkill.label}</span> •
-                                Learned: <span className="text-blue-600 font-medium">{proposal.wantedSkill.label}</span>
+                                {proposal.offeredSkill?.label ? (
+                                  <>
+                                    Taught:{" "}
+                                    <span className="text-green-600 font-medium">{proposal.offeredSkill.label}</span>
+                                    {proposal.wantedSkill?.label && " • "}
+                                  </>
+                                ) : null}
+                                {proposal.wantedSkill?.label ? (
+                                  <>
+                                    Learned: <span className="text-blue-600 font-medium">{proposal.wantedSkill.label}</span>
+                                  </>
+                                ) : null}
+                                {!proposal.offeredSkill?.label && !proposal.wantedSkill?.label && "Session details"}
                               </div>
                               <div className="text-sm text-gray-500">
-                                Completed on {formatDate(proposal.proposedDateTime)}
+                                Completed on{" "}
+                                {proposal.proposedDateTime
+                                  ? formatDate(proposal.proposedDateTime)
+                                  : proposal.date
+                                  ? formatDate(proposal.date)
+                                  : "Date not available"}
                               </div>
-                            </div>
+                                                        </div>
                             <div className="flex gap-2">
-                              <Button size="sm" onClick={() => openRatingModal(proposal)}>
-                                Rate Session
-                              </Button>
+                              {hasUserRatedProposal(proposal) ? (
+                                <Button size="sm" disabled>
+                                  Already Rated
+                                </Button>
+                              ) : (
+                                <Button size="sm" onClick={() => openRatingModal(proposal)}>                                                                      
+                                  Rate Session
+                                </Button>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -436,158 +621,93 @@ export function Dashboard() {
             <ChatSection />
           </TabsContent>
 
-          <TabsContent value="notifications">
-            <Notifications />
-          </TabsContent>
-
           <TabsContent value="profile">
             <ProfileSetup isEdit={true} />
           </TabsContent>
 
-          <TabsContent value="stats">
+          <TabsContent value="review-history">
             <div className="space-y-6">
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <TrendingUp className="w-5 h-5" />
-                    Your SwapIt Statistics
+                    Storico dei tuoi match con review lasciate
                   </CardTitle>
-                  <CardDescription>Track your learning journey and community impact</CardDescription>
+                  <CardDescription>Visualizza lo storico delle sessioni completate e le review che hai fornito</CardDescription>
                 </CardHeader>
+                                <CardContent>
+                  <div className="space-y-3">
+                    {enrichedProposals?.filter((p: any) => p.status === "COMPLETED").length === 0 ? (                                                                   
+                      <div className="text-center py-8 text-gray-500">
+                        <CheckCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />                                                                           
+                        <p>Nessun match terminato trovato.</p>
+                      </div>
+                    ) : (
+                      enrichedProposals
+                        .filter((p: any) => p.status === "COMPLETED")
+                        .map((p: any) => (
+                                                    <div key={p.id} className="flex items-center gap-4 p-4 border rounded-lg bg-green-50">                                                
+                            <div className="flex-1">
+                              <div className="font-medium mb-1">
+                                Swap Deal Done with {p.receiver?.firstName && p.receiver?.lastName
+                                  ? `${p.receiver.firstName} ${p.receiver.lastName}`
+                                  : p.receiver?.username || "Unknown User"}
+                              </div>                                                                           
+                              <div className="text-gray-600 text-sm">
+                                Data: {formatDate(p.date)} | Orario: {formatTime(p.startTime)}
+                              </div>
+                            </div>
+                                                        <div className="flex flex-col items-end gap-1">     
+                              {/* Review che hai lasciato (se disponibile) */}  
+                              {(() => {
+                                const partnerUid = p.isSent ? p.offerUser?.uid : p.requestUser?.uid
+                                const userFeedback = feedbacksGiven?.find((f: any) => 
+                                  f.reviewerUid === user?.uid && f.reviewedUid === partnerUid
+                                )
+                                
+                                return userFeedback ? (
+                                  <div key={userFeedback.id} className="bg-white p-2 rounded shadow text-sm text-gray-800">                                              
+                                    <div><span className="font-semibold">La tua recensione:</span> {userFeedback.review}</div>
+                                    <div>Rating: {userFeedback.rating}/5</div>
+                                  </div>
+                                ) : (
+                                  <div className="text-xs text-gray-500">Nessuna review fornita</div>
+                                )
+                              })()}
+                            </div>
+                          </div>
+                        ))
+                    )}
+                  </div>
+                </CardContent>
               </Card>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <Card>
-                  <CardContent className="p-6">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                        <CheckCircle className="w-6 h-6 text-blue-600" />
-                      </div>
-                      <div>
-                        <div className="text-2xl font-bold">{completedProposals.length}</div>
-                        <div className="text-sm text-gray-500">Total Swaps</div>
-                      </div>
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      You've successfully completed {completedProposals.length} skill exchanges
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="p-6">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
-                        <Star className="w-6 h-6 text-yellow-600" />
-                      </div>
-                      <div>
-                        <div className="text-2xl font-bold">{user.rating || "0.0"}</div>
-                        <div className="text-sm text-gray-500">Average Rating</div>
-                      </div>
-                    </div>
-                    <div className="text-sm text-gray-600">Based on feedback from your swap partners</div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="p-6">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                        <Target className="w-6 h-6 text-green-600" />
-                      </div>
-                      <div>
-                        <div className="text-2xl font-bold">{user.skillsOffered.length}</div>
-                        <div className="text-sm text-gray-500">Skills Offered</div>
-                      </div>
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      You're sharing knowledge in {user.skillsOffered.length} different areas
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="p-6">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                        <BookOpen className="w-6 h-6 text-purple-600" />
-                      </div>
-                      <div>
-                        <div className="text-2xl font-bold">{user.skillsWanted.length}</div>
-                        <div className="text-sm text-gray-500">Skills Learning</div>
-                      </div>
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      You're actively learning {user.skillsWanted.length} new skills
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="p-6">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
-                        <Award className="w-6 h-6 text-orange-600" />
-                      </div>
-                      <div>
-                        <div className="text-2xl font-bold">12</div>
-                        <div className="text-sm text-gray-500">Hours Taught</div>
-                      </div>
-                    </div>
-                    <div className="text-sm text-gray-600">Time spent teaching others in the community</div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="p-6">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-12 h-12 bg-teal-100 rounded-lg flex items-center justify-center">
-                        <Users className="w-6 h-6 text-teal-600" />
-                      </div>
-                      <div>
-                        <div className="text-2xl font-bold">8</div>
-                        <div className="text-sm text-gray-500">Unique Partners</div>
-                      </div>
-                    </div>
-                    <div className="text-sm text-gray-600">Different people you've exchanged skills with</div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* Skills Breakdown */}
               <Card>
                 <CardHeader>
-                  <CardTitle>Your Skills Overview</CardTitle>
-                  <CardDescription>Skills you're teaching and learning</CardDescription>
+                  <CardTitle className="flex items-center gap-2">
+                    <Star className="w-5 h-5" />
+                    Recensioni ricevute sulle tue skill
+                  </CardTitle>
+                  <CardDescription>Visualizza il feedback che hai ricevuto dagli altri utenti per ciascuna delle tue skill offerte</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <h4 className="font-semibold text-green-700 mb-3">Skills You Teach</h4>
-                      <div className="space-y-2">
-                        {user.skillsOffered.map((skill, index) => (
-                          <div key={skill} className="flex items-center justify-between p-2 bg-green-50 rounded">
-                            <span className="text-sm">{skill}</span>
-                            <span className="text-xs text-green-600 font-medium">
-                              {Math.floor(Math.random() * 5) + 1} sessions
-                            </span>
-                          </div>
-                        ))}
+                  <div className="space-y-3">
+                    {feedbacksReceived?.filter((f: any) => f.reviewedUid === user.uid).length === 0 ? (
+                      <div className="text-center py-8 text-gray-500">
+                        <Star className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                        <p>Nessuna review ricevuta.</p>
                       </div>
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-blue-700 mb-3">Skills You're Learning</h4>
-                      <div className="space-y-2">
-                        {user.skillsWanted.map((skill, index) => (
-                          <div key={skill} className="flex items-center justify-between p-2 bg-blue-50 rounded">
-                            <span className="text-sm">{skill}</span>
-                            <span className="text-xs text-blue-600 font-medium">
-                              {Math.floor(Math.random() * 3) + 1} sessions
-                            </span>
+                    ) : (
+                      feedbacksReceived
+                        .filter((f: any) => f.reviewedUid === user.uid)
+                        .map((f: any) => (
+                          <div key={f.id} className="flex flex-col gap-1 p-3 border rounded bg-yellow-50">
+                            <div>
+                              <span className="font-medium">Recensione:</span> {f.review}
+                            </div>
+                            <div>Rating: {f.rating}/5</div>
                           </div>
-                        ))}
-                      </div>
-                    </div>
+                        ))
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -596,16 +716,22 @@ export function Dashboard() {
         </Tabs>
       </div>
 
-      {sessionToRate && (
-        <RatingModal
-          open={ratingModalOpen}
-          onOpenChange={setRatingModalOpen}
-          session={sessionToRate}
-          onSubmitRating={handleSubmitRating}
-        />
-      )}
+              {sessionToRate && (
+          <RatingModal
+            open={ratingModalOpen}
+            onOpenChange={(open) => {
+              setRatingModalOpen(open)
+              if (!open) {
+                setSessionToRate(null)
+              }
+            }}
+            session={sessionToRate}
+            onSubmitRating={handleSubmitRating}
+          />
+        )}
 
       <CreateSwapModal open={createSwapModalOpen} onOpenChange={setCreateSwapModalOpen} />
     </div>
   )
 }
+

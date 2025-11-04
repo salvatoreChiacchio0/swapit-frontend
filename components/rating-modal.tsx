@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -8,7 +8,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Star } from "lucide-react"
 import { useAuth } from "@/hooks/use-auth"
-import { apiClient } from "@/lib/api"
 
 interface RatingModalProps {
   open: boolean
@@ -27,31 +26,57 @@ interface RatingModalProps {
   onSubmitRating: (rating: number, feedback: string) => void
 }
 
-export function RatingModal({ open, onOpenChange, session, onSubmitRating }: RatingModalProps) {
+export function RatingModal({ open, onOpenChange, session, onSubmitRating }: RatingModalProps) {                                                                
   const { user } = useAuth()
   const [rating, setRating] = useState(0)
   const [hoveredRating, setHoveredRating] = useState(0)
   const [feedback, setFeedback] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  useEffect(() => {
+    if (open) {
+      console.log("RatingModal opened with session:", session)
+      console.log("Partner data:", session.partner)
+      console.log("User data:", user)
+    } else {
+      // Reset form when modal closes
+      setRating(0)
+      setHoveredRating(0)
+      setFeedback("")
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
   const handleSubmit = async () => {
-    if (rating === 0 || !user) return
+    console.log("handleSubmit called", { rating, user: user?.uid, partnerId: session.partner?.id, feedback })
+    
+    if (rating === 0) {
+      console.log("Rating is 0, returning")
+      return
+    }
+    
+    if (!user) {
+      console.log("User is not available, returning")
+      return
+    }
+    
+    if (!session.partner?.id) {
+      console.log("Partner ID is not available", { partner: session.partner })
+      alert("Partner information is missing. Please try again.")
+      return
+    }
 
     setIsSubmitting(true)
     try {
-      await apiClient.createFeedback({
-        rating,
-        review: feedback,
-        reviewerUid: user.uid,
-        reviewedUid: session.partner.id,
-      })
+      // Only call onSubmitRating callback, let the parent component handle the API call
       onSubmitRating(rating, feedback)
       onOpenChange(false)
       setRating(0)
       setHoveredRating(0)
       setFeedback("")
     } catch (e) {
-      // gestisci errore
+      console.error("Failed to submit rating:", e)
+      alert(`Failed to submit rating: ${e instanceof Error ? e.message : "Unknown error"}`)
     } finally {
       setIsSubmitting(false)
     }
@@ -86,16 +111,16 @@ export function RatingModal({ open, onOpenChange, session, onSubmitRating }: Rat
           {/* Session Info */}
           <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
             <Avatar className="w-12 h-12">
-              <AvatarImage src={session.partner.avatar || "/placeholder.svg"} />
+              <AvatarImage src={session.partner?.avatar || "/placeholder.svg"} />
               <AvatarFallback>
-                {session.partner.name
-                  .split(" ")
+                {session.partner?.name
+                  ?.split(" ")
                   .map((n) => n[0])
-                  .join("")}
+                  .join("") || "U"}
               </AvatarFallback>
             </Avatar>
             <div className="flex-1">
-              <h3 className="font-semibold">{session.partner.name}</h3>
+              <h3 className="font-semibold">{session.partner?.name || "Unknown User"}</h3>
               <div className="flex gap-2 mt-1">
                 <Badge variant="outline" className="text-xs">
                   Taught: {session.skillTaught}

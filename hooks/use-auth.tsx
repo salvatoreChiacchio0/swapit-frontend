@@ -8,6 +8,7 @@ import { auth } from "@/lib/firebase"
 import { connectChat, disconnectChat } from "@/lib/chatClient"
 import { toast } from "@/hooks/use-toast"
 import { useRouter } from "next/navigation"
+import { normalizeProfilePicture } from "@/lib/utils"
 
 interface AuthUser extends User {
   skillsOffered: string[]
@@ -26,18 +27,7 @@ interface AuthContextType {
   error: string | null
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined)
-
-// Helper: normalizza stringhe immagine provenienti dal backend
-function normalizeProfilePictureString(val?: string | null): string | undefined {
-  if (!val) return undefined
-  if (val.startsWith('data:image')) return val
-  try {
-    const decoded = atob(val)
-    if (decoded.startsWith('data:image')) return decoded
-  } catch {}
-  return `data:image/png;base64,${val}`
-}
+  const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
@@ -62,9 +52,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // 2. Recupera utente dal backend tramite uid Firebase
       const response = await fetch(`http://localhost:8080/SwapItBe/api/users/${firebaseUser.uid}`)
       if (!response.ok) {
-        toast({ title: "Login fallito", description: "Utente non trovato nel backend.", variant: "destructive" })
-        setError("Utente non trovato nel backend")
-        return
+        const errMsg = "Utente non trovato nel backend"
+        toast({ title: "Login fallito", description: errMsg, variant: "destructive" })
+        setError(errMsg)
+        throw new Error(errMsg)
       }
       // Support both { users: [user] } and direct user object payloads
       const jsonPayload = await response.json()
@@ -72,9 +63,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const foundUser = Array.isArray(payloadAny?.users) ? payloadAny.users[0] : payloadAny
       console.log(foundUser)
       if (!foundUser) {
-        toast({ title: "Login fallito", description: "Utente non trovato nel backend.", variant: "destructive" })
-        setError("Utente non trovato nel backend")
-        return
+        const errMsg = "Utente non trovato nel backend"
+        toast({ title: "Login fallito", description: errMsg, variant: "destructive" })
+        setError(errMsg)
+        throw new Error(errMsg)
       }
 
       // 3. Recupera skills, feedback e swap (with error handling)
@@ -106,7 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (e) {
         console.log("No proposals found for user yet")
       }
-      const profilePicture = normalizeProfilePictureString(foundUser.profilePicture)
+      const profilePicture = normalizeProfilePicture(foundUser.profilePicture)
       const authUser: AuthUser = {
         ...foundUser,
         // canonical identifier is uid in backend
@@ -150,7 +142,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         email,
         username: name || email.split("@")[0],
       }
-      if (profilePicture) backendUserData.profilePicture = profilePicture
+      // Assicurati che profilePicture abbia il prefisso data:image se non ce l'ha già
+      if (profilePicture) {
+        backendUserData.profilePicture = profilePicture.startsWith('data:image')
+          ? profilePicture
+          : `data:image/png;base64,${profilePicture}`
+      }
       const response = await fetch("http://localhost:8080/SwapItBe/api/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -199,7 +196,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } catch(e) { /* skills non critiche, continua */ }
       // 5. Set user direttamente subito
-      const regProfilePicture = normalizeProfilePictureString(newUser.profilePicture)
+      const regProfilePicture = normalizeProfilePicture(newUser.profilePicture)
       const authUser: AuthUser = {
         ...newUser,
         profilePicture: regProfilePicture,
@@ -240,11 +237,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true)
     setError(null)
     try {
-      // 1. Update base profile (invia SOLO la base64 nuda al backend)
+      // 1. Update base profile (invia l'intero data URL con prefisso al backend)
+      // Il backend ora si aspetta il formato completo: data:image/png;base64,{base64}
       const pictureForBackend = updates.profilePicture
         ? (updates.profilePicture.startsWith('data:image')
-            ? (updates.profilePicture.split(',')[1] ?? '')
-            : updates.profilePicture)
+            ? updates.profilePicture  // Già nel formato corretto, invia così com'è
+            : `data:image/png;base64,${updates.profilePicture}`)  // Aggiungi prefisso se mancante
         : undefined
       const updatedUser = await apiClient.updateUser(user.uid, {
         email: updates.email ?? user.email,
@@ -317,7 +315,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       // 3. REFRESH: UNA sola GET /users/{uid} come richiesto
       const refreshed = await apiClient.getUserById(user.uid)
-      const refreshedPicture = normalizeProfilePictureString(refreshed.profilePicture)
+      const refreshedPicture = normalizeProfilePicture(refreshed.profilePicture)
       const refreshedOffered = Array.isArray((refreshed as any).skillOffered) ? (refreshed as any).skillOffered as string[] : savedSkillsOffered
       const refreshedWanted = Array.isArray((refreshed as any).skillDesired) ? (refreshed as any).skillDesired as string[] : savedSkillsWanted
       setUser({

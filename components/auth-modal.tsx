@@ -10,7 +10,6 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "@/hooks/use-auth"
 import { Users } from "lucide-react"
-import { useRouter } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Plus, X, User as UserIcon, BookOpen, Target } from "lucide-react" // per icone skills/avatar
 import { toast } from "@/components/ui/use-toast"
@@ -23,7 +22,6 @@ interface AuthModalProps {
 export function AuthModal({ open, onOpenChange }: AuthModalProps) {
   const [isLoading, setIsLoading] = useState(false)
   const { login, register } = useAuth()
-  const router = useRouter()
 
   const [registerProfilePicture, setRegisterProfilePicture] = useState<string | null>(null)
   const [registerProfilePicturePreview, setRegisterProfilePicturePreview] = useState<string | undefined>(undefined)
@@ -60,10 +58,16 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
     const email = formData.get("email") as string
     const password = formData.get("password") as string
 
-    await login(email, password)
-    setIsLoading(false)
-    onOpenChange(false)
-    router.push("/dashboard")
+    try {
+      await login(email, password)
+      // router.push is handled in use-auth.tsx after successful login
+      onOpenChange(false)
+    } catch (err) {
+      // Error handling is done in use-auth.tsx
+      console.error("Login error:", err)
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const handleRegister = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -83,9 +87,8 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
         registerSkillsOffered,
         registerSkillsWanted
       )
-      toast({ title: "Registrazione completata", description: "Account creato con successo!", variant: "default" })
       onOpenChange(false)
-      router.push("/dashboard")
+      // toast and router.push are handled in use-auth.tsx after successful registration
     } catch (err) {
       toast({ title: "Errore registrazione", description: "Non è stato possibile creare l'account.", variant: "destructive" })
     } finally {

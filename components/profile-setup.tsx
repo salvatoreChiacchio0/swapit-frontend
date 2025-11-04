@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { useAuth } from "@/hooks/use-auth"
 import { apiClient } from "@/lib/api"
+import { normalizeProfilePicture } from "@/lib/utils"
 import { X, Plus, Users, BookOpen, Target, Mail, User } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 
@@ -119,8 +120,8 @@ export function ProfileSetup({ isEdit = false }: ProfileSetupProps) {
       await updateProfile({
         email,
         username,
-        // Pass previewable data URL; updateProfile normalizzerà e invierà solo la base64 al backend
-        profilePicture: profilePictureBase64 ? `data:image/png;base64,${profilePictureBase64}` : undefined,
+        // Passa direttamente il data URL completo (che include già il prefisso data:image/png;base64,)
+        profilePicture: profilePicture || undefined,
         skillsOffered,
         skillsWanted,
       })
@@ -133,9 +134,8 @@ export function ProfileSetup({ isEdit = false }: ProfileSetupProps) {
     }
   }
 
-  const avatarSrc = profilePicture
-    ? (profilePicture.startsWith("data:") ? profilePicture : `data:image/png;base64,${profilePicture}`)
-    : "/placeholder.svg"
+    // Use the current preview if available, otherwise use the initial profile picture, otherwise placeholder
+  const avatarSrc = normalizeProfilePicture(profilePicture) || normalizeProfilePicture(initialProfileSrc) || "/placeholder.svg"
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -175,32 +175,58 @@ export function ProfileSetup({ isEdit = false }: ProfileSetupProps) {
               <CardDescription>Basic information for your SwapIt profile</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">      
                 <div className="space-y-2">
                   <Label htmlFor="profilePicture">Profile Picture</Label>
-                  <Input
-                    id="profilePicture"
-                    type="file"
-                    accept="image/*"
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0]
-                      if (file) {
-                        const reader = new FileReader()
-                        reader.onloadend = () => {
-                          const base64 = reader.result as string
-                          // preview immediata
-                          setProfilePicture(base64)
-                          // estrai solo base64 nuda dopo virgola
-                          setProfilePictureBase64(base64.split(",")[1] ?? "")
-                        }
-                        reader.readAsDataURL(file)
-                      }
-                    }}
-                  />
-                  {profilePictureBase64 && (
-                    <div className="mt-2 text-xs text-green-700">Profile picture inserted</div>
-                  )}
-                  <div className="mt-1 text-xs text-gray-500">Optional. Recommended size: 200x200px</div>
+                  <div className="flex items-center gap-4">
+                    <Avatar className="w-24 h-24">
+                      <AvatarImage src={avatarSrc} alt="Profile picture preview" />
+                      <AvatarFallback className="bg-gray-300">
+                        <User className="w-12 h-12 text-gray-600" />
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 space-y-2">
+                      <Input
+                        id="profilePicture"
+                        type="file"
+                        accept="image/*"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0]
+                          if (file) {
+                            // Validate file type
+                            if (!file.type.startsWith('image/')) {
+                              toast({ 
+                                title: "Invalid file type", 
+                                description: "Please select an image file.", 
+                                variant: "destructive" 
+                              })
+                              return
+                            }
+                            const reader = new FileReader()
+                            reader.onloadend = () => {
+                              const base64 = reader.result as string
+                              // preview immediata - mantiene il data URL completo con il tipo corretto
+                              setProfilePicture(base64)
+                              // estrai solo base64 nuda dopo virgola
+                              setProfilePictureBase64(base64.split(",")[1] ?? "")   
+                            }
+                            reader.onerror = () => {
+                              toast({ 
+                                title: "Error reading file", 
+                                description: "Failed to read the image file.", 
+                                variant: "destructive" 
+                              })
+                            }
+                            reader.readAsDataURL(file)
+                          }
+                        }}
+                      />
+                      {profilePictureBase64 && (
+                        <div className="text-xs text-green-700">Profile picture inserted</div>                                                                 
+                      )}
+                      <div className="text-xs text-gray-500">Optional. Recommended size: 200x200px</div>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

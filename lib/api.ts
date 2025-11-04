@@ -51,7 +51,7 @@ interface SkillOffered {
   lastUpdate: string
 }
 
-type SwapProposalStatus = "PENDING" | "ACCEPTED" | "DECLINED" | "COMPLETED"
+type SwapProposalStatus = "PENDING" | "ACCEPTED" | "REJECTED" | "COMPLETED"
 
 interface SwapProposal {
   id: number
