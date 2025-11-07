@@ -1,0 +1,13 @@
+services:
+  swapit-frontend:
+    build:
+      context: .
+    image: swapit-frontend:latest
+    container_name: swapit-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    restart: unless-stopped
+
