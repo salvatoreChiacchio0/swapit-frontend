@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -17,16 +17,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useAuth } from "@/hooks/use-auth"
-import { useApiCall, apiClient, type SkillOffered, type SkillDesired } from "@/lib/api"
+import { useApiCall, apiClient, type SkillOffered, type SkillDesired, type Recommendation } from "@/lib/api"
 import { Search, Star, MessageSquare, ArrowRight, Users, Filter } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { normalizeProfilePicture } from "@/lib/utils"
 
 interface MatchedUser {
   id: string
   name: string
   avatar: string
   bio: string
-  rating: number
+  rating: number | null
   completedSwaps: number
   skillsOffered: string[]
   skillsOfferedIds: number[]
@@ -42,13 +43,15 @@ interface MatchedUser {
 // Real API-based matching logic
 
 export function SkillMatcher() {
-  const { user, updateProfile } = useAuth()
+  const { user } = useAuth()
   const { toast } = useToast()
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedSkillFilter, setSelectedSkillFilter] = useState<string | null>(null)
   const [selectedMatch, setSelectedMatch] = useState<MatchedUser | null>(null)
   const [isProposalDialogOpen, setIsProposalDialogOpen] = useState(false)
   const [isProfileDialogOpen, setIsProfileDialogOpen] = useState(false)
+  const [ratingsMap, setRatingsMap] = useState<Record<string, number | null>>({})
+  const lastFetchedRatingsKeyRef = useRef<string>("")
 
   // Proposal form state
   const [proposalDate, setProposalDate] = useState("")
@@ -60,70 +63,96 @@ export function SkillMatcher() {
   const [isSubmittingProposal, setIsSubmittingProposal] = useState(false)
 
   // Fetch all users and their skills from backend
-  const { data: allUsers, loading: usersLoading, error: usersError } = useApiCall(() => apiClient.getUsers(), [])
-  const { data: allSkills, loading: skillsLoading, error: skillsError } = useApiCall(() => apiClient.getSkills(), [])
-  const { data: allSkillsOffered, loading: offeredLoading } = useApiCall(() => apiClient.getSkillsOffered(), [])
-  const { data: allSkillsDesired, loading: desiredLoading } = useApiCall(() => apiClient.getSkillsDesired(), [])
+  const {
+    data: recommendations,
+    loading: recommendationsLoading,
+    error: recommendationsError,
+  } = useApiCall<Recommendation[]>(() => {
+    if (!user?.uid) {
+      return Promise.resolve<Recommendation[]>([])
+    }
+    return apiClient.getSwapRecommendations(user.uid)
+  }, [user?.uid])
+  const { data: allSkills, loading: skillsLoading } = useApiCall(() => apiClient.getSkills(), [])
+  const {
+    data: userSkillsOfferedData,
+    loading: userSkillsOfferedLoading,
+  } = useApiCall<SkillOffered[]>(() => {
+    if (!user?.uid) {
+      return Promise.resolve<SkillOffered[]>([])
+    }
+    return apiClient.getSkillsOfferedByUser(user.uid)
+  }, [user?.uid])
 
   // Per ora usa solo la lista caricata dall'API come allSkills
   const userSkillLabels = useMemo(() => {
     if (!user) return []
-    return [...new Set([...user.skillsOffered, ...user.skillsWanted])]
+    return [...new Set([...(user.skillsOffered ?? []), ...(user.skillsWanted ?? [])])]
   }, [user])
 
   // Build a complete matched user list with real data
   const filteredMatches = useMemo(() => {
-    if (!user || !allUsers || !allSkillsOffered || !allSkillsDesired) return []
+    if (!user || !recommendations) return []
 
-    const matches: MatchedUser[] = allUsers
-      .filter((otherUser) => otherUser.uid !== user.uid)
-      .map((otherUser) => {
-        const offered = allSkillsOffered.filter((so) => so.userUid === otherUser.uid)
-        const desired = allSkillsDesired.filter((sd) => sd.userUid === otherUser.uid)
-        
-        const skillsOfferedLabels = offered.map(o => o.skill.label)
-        const skillsWantedLabels = desired.map(d => d.skill.label)
-        
-        // Calculate match score based on complementary skills
-        let matchScore = 0
-        const mutualSkills: string[] = []
-        
-        // User wants what other offers
-        user.skillsWanted.forEach(wanted => {
-          if (skillsOfferedLabels.includes(wanted)) {
-            matchScore += 30
-            mutualSkills.push(wanted)
-          }
-        })
-        
-        // User offers what other wants
-        user.skillsOffered.forEach(offered => {
-          if (skillsWantedLabels.includes(offered)) {
-            matchScore += 30
-            if (!mutualSkills.includes(offered)) {
-              mutualSkills.push(offered)
-            }
-          }
-        })
-        
-        return {
-          id: otherUser.uid,
-          name: otherUser.username,
-          avatar: otherUser.profilePicture || "/placeholder.svg",
-          bio: `User interested in skill exchange`,
-          rating: 4.5, // Default rating
-          completedSwaps: 0, // Would need to calculate from proposals
-          skillsOffered: skillsOfferedLabels,
-          skillsOfferedIds: offered.map(o => o.id),
-          skillsWanted: skillsWantedLabels,
-          skillsWantedIds: desired.map(d => d.id),
-          matchScore: Math.min(matchScore, 100),
-          mutualSkills,
-          userSkillsOffered: offered,
-          userSkillsDesired: desired,
+    const recList = recommendations ?? []
+    if (recList.length === 0) return []
+
+    const userWanted = user.skillsWanted ?? []
+    const userOffered = user.skillsOffered ?? []
+    const maxScore = recList.reduce(
+      (max, rec) => (rec.recommendationScore > max ? rec.recommendationScore : max),
+      0,
+    )
+
+    const matches: MatchedUser[] = recList.map((rec) => {
+      const offered = rec.skillsOffered
+      const desired = rec.skillsDesired
+      const skillsOfferedLabels = offered.map((o) => o.skill.label)
+      const skillsWantedLabels = desired.map((d) => d.skill.label)
+
+      const mutualSkills: string[] = []
+
+      userWanted.forEach((wanted) => {
+        if (skillsOfferedLabels.includes(wanted) && !mutualSkills.includes(wanted)) {
+          mutualSkills.push(wanted)
         }
       })
-      .filter(match => match.skillsOffered.length > 0 || match.skillsWanted.length > 0) // Only show users with skills
+
+      userOffered.forEach((offeredLabel) => {
+        if (skillsWantedLabels.includes(offeredLabel) && !mutualSkills.includes(offeredLabel)) {
+          mutualSkills.push(offeredLabel)
+        }
+      })
+
+      const normalizedScore =
+        maxScore > 0 ? Math.round((rec.recommendationScore / maxScore) * 100) : 0
+
+      const displayName = rec.user.username || rec.user.email || rec.user.uid
+      const reason = rec.reason?.trim()
+      const normalizedReason = reason
+        ? reason.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+        : ""
+      const shouldHideReason =
+        normalizedReason === "consigliato in base alle skill disponibili e alla popolarita degli utenti"
+      const ratingValue = ratingsMap[rec.user.uid]
+
+      return {
+        id: rec.user.uid,
+        name: displayName,
+        avatar: normalizeProfilePicture(rec.user.profilePicture) || "/placeholder.svg",
+        bio: shouldHideReason ? "" : reason || "User interested in skill exchange",
+        rating: typeof ratingValue === "number" ? ratingValue : null,
+        completedSwaps: 0, // Could be derived from future endpoint data
+        skillsOffered: skillsOfferedLabels,
+        skillsOfferedIds: offered.map((o) => o.id),
+        skillsWanted: skillsWantedLabels,
+        skillsWantedIds: desired.map((d) => d.id),
+        matchScore: Math.min(normalizedScore, 100),
+        mutualSkills,
+        userSkillsOffered: offered,
+        userSkillsDesired: desired,
+      }
+    })
 
     // Filter by search term
     let filtered = matches.filter((match) => {
@@ -142,7 +171,76 @@ export function SkillMatcher() {
 
     // Sort by match score
     return filtered.sort((a, b) => b.matchScore - a.matchScore)
-  }, [user, allUsers, allSkillsOffered, allSkillsDesired, searchTerm, selectedSkillFilter])
+  }, [user, recommendations, searchTerm, selectedSkillFilter, ratingsMap])
+
+  useEffect(() => {
+    if (!recommendations || recommendations.length === 0) {
+      setRatingsMap({})
+      lastFetchedRatingsKeyRef.current = ""
+      return
+    }
+
+    const idsKey = recommendations
+      .map((rec) => rec.user.uid)
+      .sort()
+      .join("|")
+
+    if (idsKey === lastFetchedRatingsKeyRef.current) {
+      return
+    }
+
+    lastFetchedRatingsKeyRef.current = idsKey
+    let isCancelled = false
+
+    const fetchRatings = async () => {
+      try {
+        const entries = await Promise.all(
+          recommendations.map(async (rec) => {
+            try {
+              const feedbacks = await apiClient.getFeedbacksByReviewed(rec.user.uid)
+              if (!feedbacks || feedbacks.length === 0) {
+                return [rec.user.uid, null] as const
+              }
+              const total = feedbacks.reduce((sum, feedback) => sum + (feedback?.rating ?? 0), 0)
+              const average = feedbacks.length > 0 ? Math.round((total / feedbacks.length) * 10) / 10 : null
+              return [rec.user.uid, average] as const
+            } catch (error) {
+              console.error(`Failed to load rating for user ${rec.user.uid}`, error)
+              return [rec.user.uid, null] as const
+            }
+          }),
+        )
+
+        if (!isCancelled) {
+          setRatingsMap(Object.fromEntries(entries))
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          setRatingsMap({})
+        }
+      }
+    }
+
+    fetchRatings()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [recommendations])
+
+  useEffect(() => {
+    if (!selectedMatch) return
+    const updated = filteredMatches.find((match) => match.id === selectedMatch.id)
+    if (!updated) return
+    const hasDifference =
+      updated.rating !== selectedMatch.rating ||
+      updated.bio !== selectedMatch.bio ||
+      updated.matchScore !== selectedMatch.matchScore
+
+    if (hasDifference) {
+      setSelectedMatch(updated)
+    }
+  }, [filteredMatches, selectedMatch])
 
   const handleSendProposal = async () => {
     if (!user || !selectedMatch || !proposalDate || !proposalStartTime || !proposalEndTime) {
@@ -217,14 +315,21 @@ export function SkillMatcher() {
 
   // Get user's available skills to offer
   const userSkillsToOffer = useMemo(() => {
-    if (!allSkillsOffered || !user) return []
-    return allSkillsOffered.filter(so => so.userUid === user.uid)
-  }, [allSkillsOffered, user])
+    return userSkillsOfferedData ?? []
+  }, [userSkillsOfferedData])
 
   if (!user) return null
 
-  if (usersLoading || skillsLoading || offeredLoading || desiredLoading) {
+  if (recommendationsLoading || skillsLoading || userSkillsOfferedLoading) {
     return <div className="text-center py-20 text-gray-500">Loading matches...</div>
+  }
+
+  if (recommendationsError) {
+    return (
+      <div className="text-center py-20 text-red-500">
+        Failed to load recommendations. Please try again later.
+      </div>
+    )
   }
 
   return (
@@ -308,19 +413,23 @@ export function SkillMatcher() {
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-2">
                         <h3 className="text-xl font-semibold">{match.name}</h3>
+                        {match.matchScore > 0 && (
                         <Badge variant="secondary" className="bg-green-100 text-green-800">
                           {match.matchScore}% match
                         </Badge>
+                        )}
                       </div>
                       <div className="flex items-center gap-4 mb-3 text-sm text-gray-600">
                         <div className="flex items-center gap-1">
                           <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-                          <span>{match.rating}</span>
+                          <span>
+                            {typeof match.rating === "number" ? match.rating.toFixed(1) : "New User"}
+                          </span>
                         </div>
                         <span>{match.completedSwaps} swaps completed</span>
                         {match.location && <span>{match.location}</span>}
                       </div>
-                      <p className="text-gray-700 mb-4">{match.bio}</p>
+                      {match.bio && <p className="text-gray-700 mb-4">{match.bio}</p>}
 
                       {/* Skills */}
                       <div className="space-y-3">
@@ -507,7 +616,11 @@ export function SkillMatcher() {
                 <div className="flex items-center gap-4 text-sm text-gray-600">
                   <div className="flex items-center gap-1">
                     <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-                    <span>{selectedMatch?.rating}</span>
+                    <span>
+                      {typeof selectedMatch?.rating === "number"
+                        ? selectedMatch.rating.toFixed(1)
+                        : "New User"}
+                    </span>
                   </div>
                   <span>{selectedMatch?.completedSwaps} swaps completed</span>
                 </div>

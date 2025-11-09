@@ -81,10 +81,21 @@ interface Feedback {
 }
 
 const API_BASE_URL = "http://localhost:8080/SwapItBe/api"
+const REC_SERVICE_BASE_URL =
+  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_REC_SERVICE_URL) || "http://localhost:3002"
+
+interface Recommendation {
+  user: User
+  skillsOffered: SkillOffered[]
+  skillsDesired: SkillDesired[]
+  recommendationScore: number
+  reason: string
+}
 
 class ApiClient {
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const url = `${API_BASE_URL}${endpoint}`
+    const isAbsoluteUrl = /^https?:\/\//i.test(endpoint)
+    const url = isAbsoluteUrl ? endpoint : `${API_BASE_URL}${endpoint}`
 
     const config: RequestInit = {
       headers: {
@@ -409,6 +420,19 @@ class ApiClient {
   }
 
   // Google Calendar
+  async getSwapRecommendations(userUid: string, limit?: number): Promise<Recommendation[]> {
+    const baseUrl = REC_SERVICE_BASE_URL.replace(/\/$/, "")
+    let endpoint = `${baseUrl}/recommendations/swaps/${userUid}`
+
+    if (typeof limit === "number") {
+      const searchParams = new URLSearchParams()
+      searchParams.set("limit", String(limit))
+      endpoint = `${endpoint}?${searchParams.toString()}`
+    }
+
+    return this.request<Recommendation[]>(endpoint)
+  }
+
   async getCalendarEvents(): Promise<any[]> {
     return this.request<any[]>("/gcalendar/events")
   }
@@ -463,4 +487,13 @@ export function useApiCall<T>(apiCall: () => Promise<T>, dependencies: any[] = [
   return state
 }
 
-export type { User, Skill, SkillDesired, SkillOffered, SwapProposal, Feedback, ApiResponse }
+export type {
+  User,
+  Skill,
+  SkillDesired,
+  SkillOffered,
+  SwapProposal,
+  Feedback,
+  ApiResponse,
+  Recommendation,
+}
