@@ -60,11 +60,8 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
 
     try {
       await login(email, password)
-      // router.push is handled in use-auth.tsx after successful login
       onOpenChange(false)
     } catch (err) {
-      // Error handling is done in use-auth.tsx
-      console.error("Login error:", err)
     } finally {
       setIsLoading(false)
     }
@@ -88,7 +85,6 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
         registerSkillsWanted
       )
       onOpenChange(false)
-      // toast and router.push are handled in use-auth.tsx after successful registration
     } catch (err) {
       toast({ title: "Errore registrazione", description: "Non è stato possibile creare l'account.", variant: "destructive" })
     } finally {

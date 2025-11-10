@@ -10,7 +10,6 @@ interface ApiResponse<T> {
   error: string | null
 }
 
-// Backend DTO-aligned types
 interface User {
   uid: string
   email: string
@@ -105,18 +104,8 @@ class ApiClient {
       ...options,
     }
 
-    console.log("🌐 ApiClient.request - Making fetch call:")
-    console.log("  URL:", url)
-    console.log("  Method:", config.method || "GET")
-    console.log("  Headers:", config.headers)
-    console.log("  Body:", config.body)
-
     try {
       const response = await fetch(url, config)
-      console.log("📥 ApiClient.request - Response received:")
-      console.log("  Status:", response.status)
-      console.log("  StatusText:", response.statusText)
-      console.log("  OK:", response.ok)
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
@@ -137,12 +126,10 @@ class ApiClient {
         return undefined as unknown as T
       }
     } catch (error) {
-      console.error(`API request failed: ${endpoint}`, error)
       throw error
     }
   }
 
-  // User Management
   async getUsers(): Promise<User[]> {
     return this.request<User[]>("/users")
   }
@@ -171,7 +158,6 @@ class ApiClient {
     })
   }
 
-  // Skills Management
   async getSkills(): Promise<Skill[]> {
     return this.request<Skill[]>("/skills")
   }
@@ -200,7 +186,6 @@ class ApiClient {
     })
   }
 
-  // Desired Skills
   async getSkillsDesired(): Promise<SkillDesired[]> {
     return this.request<SkillDesired[]>("/skills/desired")
   }
@@ -224,7 +209,6 @@ class ApiClient {
     return this.request<void>(`/skills/desired/user/${userUid}/skill/${skillId}`, { method: "DELETE" })
   }
 
-  // Offered Skills
   async getSkillsOffered(): Promise<SkillOffered[]> {
     return this.request<SkillOffered[]>("/skills/offered")
   }
@@ -248,7 +232,6 @@ class ApiClient {
     return this.request<void>(`/skills/offered/user/${userUid}/skill/${skillId}`, { method: "DELETE" })
   }
 
-  // Swap Proposals Management
   async getSwapProposals(): Promise<SwapProposal[]> {
     return this.request<SwapProposal[]>("/swap-proposals")
   }
@@ -309,7 +292,6 @@ class ApiClient {
     })
   }
 
-  // Feedback Management
   async getFeedbacks(): Promise<Feedback[]> {
     return this.request<Feedback[]>("/feedbacks")
   }
@@ -327,22 +309,10 @@ class ApiClient {
   }
 
   async createFeedback(feedbackData: { rating: number; review: string; reviewerUid: string; reviewedUid: string }): Promise<Feedback> {
-    console.log("📤 ApiClient.createFeedback called with:", feedbackData)
-    console.log("📤 Endpoint: /feedbacks")
-    console.log("📤 Method: POST")
-    console.log("📤 Body (stringified):", JSON.stringify(feedbackData))
-    
-    try {
-      const result = await this.request<Feedback>("/feedbacks", {
-        method: "POST",
-        body: JSON.stringify(feedbackData),
-      })
-      console.log("✅ ApiClient.createFeedback success:", result)
-      return result
-    } catch (error) {
-      console.error("❌ ApiClient.createFeedback error:", error)
-      throw error
-    }
+    return this.request<Feedback>("/feedbacks", {
+      method: "POST",
+      body: JSON.stringify(feedbackData),
+    })
   }
 
   async updateFeedback(id: number, feedbackData: { rating: number; review: string; reviewerUid: string; reviewedUid: string }): Promise<Feedback> {
@@ -358,7 +328,6 @@ class ApiClient {
     })
   }
 
-  // Missing User endpoints
   async getUserByEmail(email: string): Promise<User> {
     return this.request<User>(`/users/email/${email}`)
   }
@@ -371,7 +340,6 @@ class ApiClient {
     return this.request<{ exists: boolean }>(`/users/email/${email}/exists`)
   }
 
-  // Missing Skill endpoints
   async getSkillByLabel(label: string): Promise<Skill> {
     return this.request<Skill>(`/skills/label/${label}`)
   }
@@ -430,13 +398,10 @@ class ApiClient {
     return this.request<{ exists: boolean }>(`/skills/offered/user/${userUid}/skill/${skillId}/exists`)
   }
 
-  // Missing SwapProposal endpoints
-
   async checkSwapProposalExists(id: number): Promise<{ exists: boolean }> {
     return this.request<{ exists: boolean }>(`/swap-proposals/${id}/exists`)
   }
 
-  // Missing Feedback endpoints
   async checkFeedbackExists(id: number): Promise<{ exists: boolean }> {
     return this.request<{ exists: boolean }>(`/feedbacks/${id}/exists`)
   }
@@ -469,7 +434,6 @@ class ApiClient {
 
 export const apiClient = new ApiClient()
 
-// Custom hook for API calls with loading and error states
 export function useApiCall<T>(apiCall: () => Promise<T>, dependencies: any[] = []) {
   const [state, setState] = useState<ApiResponse<T>>({
     data: null,

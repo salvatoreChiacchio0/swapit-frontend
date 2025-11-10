@@ -22,7 +22,6 @@ import { useApiCall, apiClient } from "@/lib/api"
 import { normalizeProfilePicture } from "@/lib/utils"
 import { RatingModal } from "@/components/rating-modal"
 
-// Extended UI model with fetched user and skill data
 interface UISwapProposal {
   id: number
   fromUserUid: string
@@ -56,8 +55,6 @@ interface UISwapProposal {
   } | null
 }
 
-// Mock data for proposals (not currently used - using real API data instead)
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const mockProposals: any[] = [
   {
     id: "1",
@@ -177,7 +174,6 @@ export function SwapProposals({ onNavigateToChat }: SwapProposalsProps = {}) {
   const { user } = useAuth()
   const [refreshKey, setRefreshKey] = useState(0)
 
-  // Recupera le proposte reali dal backend (both sent and received)
   const { data: sent, loading: sentLoading, error: sentError } = useApiCall(
     () => (user ? apiClient.getSwapProposalsByRequestUser(user.uid) : Promise.resolve([])),
     [user?.uid, refreshKey],
@@ -187,34 +183,27 @@ export function SwapProposals({ onNavigateToChat }: SwapProposalsProps = {}) {
     [user?.uid, refreshKey],
   )
 
-  // Fetch skills data
   const { data: skills } = useApiCall(() => apiClient.getSkills(), [])
 
-  // State for enriched proposals with user and skill data
   const [sentProposals, setSentProposals] = useState<UISwapProposal[]>([])
   const [receivedProposals, setReceivedProposals] = useState<UISwapProposal[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
   
-  // State for mark as completed modal
   const [completedDialogOpen, setCompletedDialogOpen] = useState(false)
   const [proposalToComplete, setProposalToComplete] = useState<UISwapProposal | null>(null)
   
-  // State for rating modal
   const [ratingModalOpen, setRatingModalOpen] = useState(false)
   const [proposalToRate, setProposalToRate] = useState<UISwapProposal | null>(null)
   
-  // Fetch feedbacks to check if user already rated
   const { data: userFeedbacks } = useApiCall(
     () => (user ? apiClient.getFeedbacksByReviewer(user.uid) : Promise.resolve([])),
     [user?.uid, refreshKey],
   )
 
-  // Enrich proposals with user and skill data
   useEffect(() => {
     if (!sent || !received || !skills) return
 
     const enrichProposals = async (proposals: typeof sent) => {
-      // Collect unique user UIDs and skill IDs
       const userUids = new Set<string>()
       const skillIds = new Set<number>()
       
@@ -225,7 +214,6 @@ export function SwapProposals({ onNavigateToChat }: SwapProposalsProps = {}) {
         skillIds.add(p.skillRequestedId)
       })
 
-      // Fetch all users and create a map
       const userMap = new Map<string, { uid: string; username: string; profilePicture?: string | null }>()
       setLoadingUsers(true)
       try {
@@ -239,7 +227,7 @@ export function SwapProposals({ onNavigateToChat }: SwapProposalsProps = {}) {
                 profilePicture: normalizeProfilePicture(userData.profilePicture),
               })
             } catch (e) {
-              console.error(`Failed to fetch user ${uid}:`, e)
+              // Failed to fetch user
             }
           })
         )
@@ -247,13 +235,11 @@ export function SwapProposals({ onNavigateToChat }: SwapProposalsProps = {}) {
         setLoadingUsers(false)
       }
 
-      // Create skill map
       const skillMap = new Map<number, { id: number; label: string }>()
       skills.forEach((skill) => {
         skillMap.set(skill.id, { id: skill.id, label: skill.label })
       })
 
-      // Map proposals with enriched data
       return proposals.map((p) => ({
         id: p.id,
         fromUserUid: p.requestUserUid,
@@ -275,25 +261,21 @@ export function SwapProposals({ onNavigateToChat }: SwapProposalsProps = {}) {
 
     enrichProposals(sent).then(setSentProposals)
     
-    // For received proposals, swap the from/to logic
     enrichProposals(received).then((enriched) => {
       return enriched.map((p) => ({
         ...p,
         type: "received" as const,
-        // For received proposals, fromUser is the one who sent it (requestUser), toUser is us (offerUser)
-        fromUser: p.fromUser, // requestUser is the one who sent the proposal
-        toUser: p.toUser, // offerUser is us (the receiver)
+        fromUser: p.fromUser,
+        toUser: p.toUser,
       }))
     }).then(setReceivedProposals)
   }, [sent, received, skills])
 
   const handleAcceptProposal = async (proposalId: number) => {
     try {
-      // Trova la proposta da aggiornare
       const proposal = receivedProposals.find(p => p.id === proposalId)
       if (!proposal) return
 
-      // Backend richiede tutti i campi per update
       await apiClient.updateSwapProposal(proposalId, {
         date: proposal.date,
         startTime: proposal.startTime,
@@ -308,17 +290,14 @@ export function SwapProposals({ onNavigateToChat }: SwapProposalsProps = {}) {
       // Forza refresh delle proposte
       setRefreshKey((prev) => prev + 1)
     } catch (e) {
-      console.error("Failed to accept proposal:", e)
       alert("Failed to accept proposal. Please try again.")
     }
   }
   const handleDeclineProposal = async (proposalId: number) => {
     try {
-      // Trova la proposta da aggiornare
       const proposal = receivedProposals.find(p => p.id === proposalId)
       if (!proposal) return
 
-      // Backend richiede tutti i campi per update
       await apiClient.updateSwapProposal(proposalId, {
         date: proposal.date,
         startTime: proposal.startTime,
@@ -333,52 +312,43 @@ export function SwapProposals({ onNavigateToChat }: SwapProposalsProps = {}) {
       // Forza refresh delle proposte
       setRefreshKey((prev) => prev + 1)
     } catch (e) {
-      console.error("Failed to decline proposal:", e)
       alert("Failed to decline proposal. Please try again.")
     }
   }
 
-  // Check if the session date and time have passed
   const isSessionPassed = (date: string, endTime: string): boolean => {
     try {
       const sessionDateTime = new Date(`${date}T${endTime}`)
       const now = new Date()
       return now >= sessionDateTime
     } catch (e) {
-      console.error("Error parsing session date/time:", e)
       return false
     }
   }
 
-  // Check if user has already rated this proposal
   const hasUserRated = (proposal: UISwapProposal): boolean => {
     if (!user || !userFeedbacks) return false
     
-    // Determine the partner UID (the other user in the proposal)
     const partnerUid = proposal.type === "sent" 
-      ? proposal.toUserUid  // If I sent it, partner is toUser
-      : proposal.fromUserUid  // If I received it, partner is fromUser
+      ? proposal.toUserUid
+      : proposal.fromUserUid
     
-    // Check if there's a feedback from current user to partner
     return userFeedbacks.some(
       (feedback: any) => feedback.reviewedUid === partnerUid
     )
   }
 
-  // Get partner UID for rating
   const getPartnerUid = (proposal: UISwapProposal): string => {
     return proposal.type === "sent" 
       ? proposal.toUserUid
       : proposal.fromUserUid
   }
 
-  // Get partner info for rating
   const getPartnerInfo = (proposal: UISwapProposal) => {
     const partner = proposal.type === "sent" ? proposal.toUser : proposal.fromUser
     return partner || null
   }
 
-  // Open rating modal
   const handleRateSession = (proposal: UISwapProposal) => {
     const partner = getPartnerInfo(proposal)
     if (!partner) {
@@ -389,22 +359,13 @@ export function SwapProposals({ onNavigateToChat }: SwapProposalsProps = {}) {
     setRatingModalOpen(true)
   }
 
-  // Handle rating submission
   const handleRatingSubmitted = async (rating: number, feedback: string) => {
-    console.log("=== SWAP-PROPOSALS: handleRatingSubmitted START ===")
-    console.log("Rating:", rating)
-    console.log("Feedback:", feedback)
-    console.log("Proposal to rate:", proposalToRate)
-    
     if (!user || !proposalToRate) {
-      console.error("❌ Missing user or proposalToRate")
       throw new Error("Missing user or proposal to rate")
     }
     
-    // Get partner UID
     const partnerUid = getPartnerUid(proposalToRate)
     if (!partnerUid) {
-      console.error("❌ Could not determine partner UID")
       throw new Error("Could not determine partner UID")
     }
     
@@ -416,32 +377,21 @@ export function SwapProposals({ onNavigateToChat }: SwapProposalsProps = {}) {
         reviewedUid: partnerUid,
       }
       
-      console.log("📤 Preparing to call API with feedbackData:", feedbackData)
-      console.log("📤 API endpoint: POST /api/feedbacks")
+      await apiClient.createFeedback(feedbackData)
       
-      const result = await apiClient.createFeedback(feedbackData)
-      console.log("✅ API call successful! Response:", result)
-      
-      // Only close modal and refresh after successful API call
       setRatingModalOpen(false)
       setProposalToRate(null)
       setRefreshKey((prev) => prev + 1)
-      
-      console.log("=== SWAP-PROPOSALS: handleRatingSubmitted END (SUCCESS) ===")
     } catch (error) {
-      console.error("❌ SWAP-PROPOSALS: Failed to submit rating:", error)
-      // Don't close modal on error - let user retry
       throw error
     }
   }
 
-  // Open the mark as completed dialog
   const handleMarkAsCompletedClick = (proposal: UISwapProposal) => {
     setProposalToComplete(proposal)
     setCompletedDialogOpen(true)
   }
 
-  // Mark proposal as completed
   const handleMarkAsCompleted = async () => {
     if (!proposalToComplete) return
 
@@ -460,10 +410,8 @@ export function SwapProposals({ onNavigateToChat }: SwapProposalsProps = {}) {
       
       setCompletedDialogOpen(false)
       setProposalToComplete(null)
-      // Forza refresh delle proposte
       setRefreshKey((prev) => prev + 1)
     } catch (e) {
-      console.error("Failed to mark proposal as completed:", e)
       alert("Failed to mark proposal as completed. Please try again.")
     }
   }
@@ -602,7 +550,6 @@ export function SwapProposals({ onNavigateToChat }: SwapProposalsProps = {}) {
                       </div>
                     </div>
 
-                    {/* Actions */}
                     {proposal.status === "PENDING" && (
                       <div className="flex flex-col gap-2 lg:w-48">
                         <Button onClick={() => handleAcceptProposal(proposal.id)} className="w-full">
@@ -731,7 +678,6 @@ export function SwapProposals({ onNavigateToChat }: SwapProposalsProps = {}) {
                       </div>
                     </div>
 
-                    {/* Status Actions */}
                     <div className="flex flex-col gap-2 lg:w-48">
                       {proposal.status === "PENDING" && (
                         <>
@@ -796,7 +742,6 @@ export function SwapProposals({ onNavigateToChat }: SwapProposalsProps = {}) {
         </TabsContent>
       </Tabs>
 
-      {/* Mark as Completed Confirmation Dialog */}
       <AlertDialog open={completedDialogOpen} onOpenChange={setCompletedDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -816,7 +761,6 @@ export function SwapProposals({ onNavigateToChat }: SwapProposalsProps = {}) {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Rating Modal */}
       {proposalToRate && (() => {
         const partner = getPartnerInfo(proposalToRate)
         if (!partner) return null

@@ -102,7 +102,7 @@ export function CreateSwapModal({ open, onOpenChange, targetUser }: CreateSwapMo
       skillOfferedId: selectedSkillToOfferId,
       skillRequestedId: selectedSkillToLearnId,
       date: proposedDate?.toISOString().split("T")[0] as string,
-      startTime: proposedTime + ":00", // Aggiungi secondi
+      startTime: proposedTime + ":00",
       endTime: calculateEndTime(proposedTime, duration),
       presentationLetter: message,
       status: "PENDING" as const,
@@ -151,14 +151,12 @@ export function CreateSwapModal({ open, onOpenChange, targetUser }: CreateSwapMo
     })
   }
 
-  // Helper per ottenere il label di una skill offerta
   const getSkillOfferedLabel = (skillId: number | null): string => {
     if (!skillId || !userSkillsOffered) return ""
     const skill = userSkillsOffered.find(so => so.skill.id === skillId)
     return skill?.skill.label || ""
   }
 
-  // Helper per ottenere il label di una skill desiderata
   const getSkillDesiredLabel = (skillId: number | null): string => {
     if (!skillId || !userSkillsDesired) return ""
     const skill = userSkillsDesired.find(sd => sd.skill.id === skillId)

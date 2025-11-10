@@ -41,7 +41,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Recupera utente dal backend tramite uid Firebase
       const response = await fetch(`http://localhost:8080/SwapItBe/api/users/${firebaseUser.uid}`)
       if (!response.ok) {
-        console.log("Utente non trovato nel backend")
         return null
       }
       
@@ -50,11 +49,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const foundUser = Array.isArray(payloadAny?.users) ? payloadAny.users[0] : payloadAny
       
       if (!foundUser) {
-        console.log("Utente non trovato nel backend")
         return null
       }
 
-      // Recupera skills, feedback e swap (with error handling)
       const backendUserUid = foundUser.uid
       let skillsWanted: string[] = []
       let skillsOffered: string[] = []
@@ -67,21 +64,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         skillsWanted = desired.map((d) => d.skill.label)
         skillsOffered = offered.map((o) => o.skill.label)
       } catch (e) {
-        console.log("No skills found for user yet")
       }
 
       try {
         const feedbacks = await apiClient.getFeedbacksByReviewed(backendUserUid)
         rating = feedbacks.length > 0 ? feedbacks.reduce((sum, f) => sum + f.rating, 0) / feedbacks.length : 0
       } catch (e) {
-        console.log("No feedbacks found for user yet")
       }
 
       try {
         const proposals = await apiClient.getSwapProposalsByRequestUser(backendUserUid)
         completedSwaps = proposals.filter((p) => p.status === "COMPLETED").length
       } catch (e) {
-        console.log("No proposals found for user yet")
       }
       
       const profilePicture = normalizeProfilePicture(foundUser.profilePicture)
@@ -96,17 +90,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       return authUser
     } catch (error) {
-      console.error("Error loading user data:", error)
       return null
     }
   }
 
   useEffect(() => {
-    // Listener per lo stato di autenticazione Firebase
-    // Questo rileva automaticamente se l'utente è già loggato quando la pagina viene ricaricata
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        // Utente autenticato: carica i dati dal backend
         setLoading(true)
         const userData = await loadUserData(firebaseUser)
         if (userData) {
@@ -114,21 +104,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           try { 
             await connectChat() 
           } catch (e) { 
-            console.warn('Chat connect failed', e) 
           }
         } else {
-          // Se i dati non possono essere caricati, disconnetti
           setUser(null)
         }
         setLoading(false)
       } else {
-        // Nessun utente autenticato
         setUser(null)
         setLoading(false)
       }
     })
 
-    // Cleanup del listener quando il componente viene smontato
     return () => unsubscribe()
   }, [])
 
@@ -137,12 +123,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(null)
 
     try {
-      // 1. Login su Firebase Auth
       const userCredential = await signInWithEmailAndPassword(auth, email, password)
       const firebaseUser = userCredential.user
-      console.log(firebaseUser)
       
-      // 2. Carica i dati utente usando la funzione helper
       const authUser = await loadUserData(firebaseUser)
       if (!authUser) {
         const errMsg = "Utente non trovato nel backend"
@@ -152,7 +135,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       setUser(authUser)
-      try { await connectChat() } catch (e) { console.warn('Chat connect failed', e) }
+      try { await connectChat() } catch (e) { }
       router.push("/dashboard")
     } catch (error) {
       let msg = "Login fallito"
@@ -186,7 +169,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         email,
         username: name || email.split("@")[0],
       }
-      // Assicurati che profilePicture abbia il prefisso data:image se non ce l'ha già
       if (profilePicture) {
         backendUserData.profilePicture = profilePicture.startsWith('data:image')
           ? profilePicture
@@ -204,17 +186,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       const newUser = await response.json()
       const backendUserUid = newUser.uid
-      // 4. SALVA skills desiderate/offerte se fornite
       let savedSkillsOffered: string[] = []
       let savedSkillsWanted: string[] = []
       try {
         let allSkills = await apiClient.getSkills()
-        // OFFERTE
         if (skillsOffered && skillsOffered.length) {
           for (const label of skillsOffered) {
             let skill = allSkills.find(s => s.label === label)
             if (!skill) {
-              // crea la skill se non esiste
               skill = await apiClient.createSkill({ label })
               allSkills = [ ...allSkills, skill ]
             }
@@ -224,7 +203,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             } catch {}
           }
         }
-        // DESIDERATE
         if (skillsWanted && skillsWanted.length) {
           for (const label of skillsWanted) {
             let skill = allSkills.find(s => s.label === label)
@@ -238,8 +216,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             } catch {}
           }
         }
-      } catch(e) { /* skills non critiche, continua */ }
-      // 5. Set user direttamente subito
+      } catch(e) { }
       const regProfilePicture = normalizeProfilePicture(newUser.profilePicture)
       const authUser: AuthUser = {
         ...newUser,
@@ -272,10 +249,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     try {
-      // Disconnetti da Firebase Auth
       await signOut(auth)
     } catch (error) {
-      console.error("Error signing out:", error)
     }
     setUser(null)
     setError(null)
@@ -287,12 +262,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true)
     setError(null)
     try {
-      // 1. Update base profile (invia l'intero data URL con prefisso al backend)
-      // Il backend ora si aspetta il formato completo: data:image/png;base64,{base64}
       const pictureForBackend = updates.profilePicture
         ? (updates.profilePicture.startsWith('data:image')
-            ? updates.profilePicture  // Già nel formato corretto, invia così com'è
-            : `data:image/png;base64,${updates.profilePicture}`)  // Aggiungi prefisso se mancante
+            ? updates.profilePicture
+            : `data:image/png;base64,${updates.profilePicture}`)
         : undefined
       const updatedUser = await apiClient.updateUser(user.uid, {
         email: updates.email ?? user.email,
@@ -300,17 +273,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         profilePicture: pictureForBackend,
       })
 
-      // 2. Skills update (differenziale!)
-      // 2.1 Ottieni tutte le skill attuali associate
       const currentOffered = await apiClient.getSkillsOfferedByUser(user.uid)
       const currentWanted = await apiClient.getSkillsDesiredByUser(user.uid)
       let allSkills = await apiClient.getSkills()
-      // Skills target scelte in questo salvataggio (label)
       const offeredList = (updates.skillsOffered ?? user.skillsOffered ?? []).map(l => l.trim())
       const wantedList = (updates.skillsWanted ?? user.skillsWanted ?? []).map(l => l.trim())
       const currentOfferedLabels = currentOffered.map(o => o.skill.label.trim())
       const currentWantedLabels = currentWanted.map(w => w.skill.label.trim())
-      // 2.2 Cancella SOLO quelle rimosse (usando endpoint user/skill)
       const toRemoveOffered = currentOfferedLabels.filter(l => !offeredList.includes(l))
       for (const label of toRemoveOffered) {
         let skill = allSkills.find(s => s.label === label)
@@ -318,7 +287,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           try { skill = await apiClient.getSkillByLabel(label) } catch {}
         }
         if (skill) {
-          try { await apiClient.deleteSkillOfferedByUserAndSkill(user.uid, skill.id) } catch(e) { console.error('DELETE offered failed', label, e) }
+          try { await apiClient.deleteSkillOfferedByUserAndSkill(user.uid, skill.id) } catch(e) { }
         }
       }
       const toRemoveWanted = currentWantedLabels.filter(l => !wantedList.includes(l))
@@ -328,28 +297,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           try { skill = await apiClient.getSkillByLabel(label) } catch {}
         }
         if (skill) {
-          try { await apiClient.deleteSkillDesiredByUserAndSkill(user.uid, skill.id) } catch(e) { console.error('DELETE desired failed', label, e) }
+          try { await apiClient.deleteSkillDesiredByUserAndSkill(user.uid, skill.id) } catch(e) { }
         }
       }
-      // 2.3 Crea solo quelle nuove rispetto al set attuale
       let savedSkillsOffered: string[] = [];
       let savedSkillsWanted: string[] = [];
-      // OFFERTE
       for (const label of offeredList) {
         let skill = allSkills.find(s => s.label === label)
         if (!skill) {
           skill = await apiClient.createSkill({ label })
           allSkills = [...allSkills, skill]
         }
-        // Se non già presente fra quelle effettive nel backend, aggiungi
         if (!currentOffered.some(o => o.skill.label === label)) {
           try {
             await apiClient.createSkillOffered({ userUid: user.uid, skillId: skill.id })
-          } catch (e) { console.error(`Errore salvataggio skill offered ${label}`, e) }
+          } catch (e) { }
         }
         savedSkillsOffered.push(label)
       }
-      // DESIDERATE
       for (const label of wantedList) {
         let skill = allSkills.find(s => s.label === label)
         if (!skill) {
@@ -359,11 +324,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!currentWanted.some(w => w.skill.label === label)) {
           try {
             await apiClient.createSkillDesired({ userUid: user.uid, skillId: skill.id })
-          } catch (e) { console.error(`Errore salvataggio skill desired ${label}`, e) }
+          } catch (e) { }
         }
         savedSkillsWanted.push(label)
       }
-      // 3. REFRESH: UNA sola GET /users/{uid} come richiesto
       const refreshed = await apiClient.getUserById(user.uid)
       const refreshedPicture = normalizeProfilePicture(refreshed.profilePicture)
       const refreshedOffered = Array.isArray((refreshed as any).skillOffered) ? (refreshed as any).skillOffered as string[] : savedSkillsOffered

@@ -72,12 +72,8 @@ export function ProfileSetup({ isEdit = false }: ProfileSetupProps) {
   const { user, updateProfile } = useAuth()
   const [skillsOffered, setSkillsOffered] = useState<string[]>(user?.skillsOffered || [])
   const [skillsWanted, setSkillsWanted] = useState<string[]>(user?.skillsWanted || [])
-  // const [bio, setBio] = useState(user?.bio || "") // RIMOSSO
   const [email, setEmail] = useState(user?.email || "")
   const [username, setUsername] = useState(user?.username || "")
-  // Normalize initial profile picture:
-  // - If user.profilePicture already includes a data URL header, use it as-is and extract raw base64 for backend
-  // - Otherwise treat it as raw base64 and add the header for preview/UI
   const userPic = user?.profilePicture
   const initialProfileSrc = userPic
     ? (userPic.startsWith("data:image") ? userPic : `data:image/png;base64,${userPic}`)
@@ -120,26 +116,22 @@ export function ProfileSetup({ isEdit = false }: ProfileSetupProps) {
       await updateProfile({
         email,
         username,
-        // Passa direttamente il data URL completo (che include già il prefisso data:image/png;base64,)
         profilePicture: profilePicture || undefined,
         skillsOffered,
         skillsWanted,
       })
       toast({ title: "Profilo aggiornato", description: "Profilo aggiornato con successo!", variant: "default" })
     } catch (error) {
-      console.error("Failed to save profile:", error)
       toast({ title: "Errore salvataggio", description: "Si è verificato un errore durante il salvataggio del profilo.", variant: "destructive" })
     } finally {
       setIsSaving(false)
     }
   }
 
-    // Use the current preview if available, otherwise use the initial profile picture, otherwise placeholder
   const avatarSrc = normalizeProfilePicture(profilePicture) || normalizeProfilePicture(initialProfileSrc) || "/placeholder.svg"
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
       {!isEdit && (
       <header className="bg-white border-b">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
@@ -205,9 +197,7 @@ export function ProfileSetup({ isEdit = false }: ProfileSetupProps) {
                             const reader = new FileReader()
                             reader.onloadend = () => {
                               const base64 = reader.result as string
-                              // preview immediata - mantiene il data URL completo con il tipo corretto
                               setProfilePicture(base64)
-                              // estrai solo base64 nuda dopo virgola
                               setProfilePictureBase64(base64.split(",")[1] ?? "")   
                             }
                             reader.onerror = () => {
@@ -256,7 +246,6 @@ export function ProfileSetup({ isEdit = false }: ProfileSetupProps) {
             </CardContent>
           </Card>
 
-          {/* Skills I Can Teach */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -312,7 +301,6 @@ export function ProfileSetup({ isEdit = false }: ProfileSetupProps) {
             </CardContent>
           </Card>
 
-          {/* Skills I Want to Learn */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -368,7 +356,6 @@ export function ProfileSetup({ isEdit = false }: ProfileSetupProps) {
             </CardContent>
           </Card>
 
-          {/* Save Button */}
           <div className="flex justify-center">
             <Button
               size="lg"

@@ -34,95 +34,48 @@ export function RatingModal({ open, onOpenChange, session, onSubmitRating }: Rat
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
-    if (open) {
-      console.log("RatingModal opened with session:", session)
-      console.log("Partner data:", session.partner)
-      console.log("User data:", user)
-      console.log("onSubmitRating prop:", onSubmitRating)
-      console.log("onSubmitRating type:", typeof onSubmitRating)
-    } else {
-      // Reset form when modal closes
+    if (!open) {
       setRating(0)
       setHoveredRating(0)
       setFeedback("")
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   const handleSubmit = async () => {
-    console.log("=== RATING MODAL: handleSubmit START ===")
-    console.log("Rating:", rating)
-    console.log("Feedback:", feedback)
-    console.log("User:", user?.uid)
-    console.log("Partner ID:", session.partner?.id)
-    console.log("Session:", session)
-    
     if (rating === 0) {
-      console.log("❌ Rating is 0, returning early")
       alert("Please select a rating before submitting.")
       return
     }
     
     if (!user) {
-      console.log("❌ User is not available, returning early")
       alert("User is not available. Please try again.")
       return
     }
     
     if (!session.partner?.id) {
-      console.log("❌ Partner ID is not available", { partner: session.partner })
       alert("Partner information is missing. Please try again.")
       return
     }
 
-    console.log("✅ All validations passed, calling onSubmitRating...")
-    console.log("onSubmitRating type:", typeof onSubmitRating)
-    console.log("onSubmitRating function:", onSubmitRating)
-    
     if (typeof onSubmitRating !== 'function') {
-      console.error("❌ onSubmitRating is not a function!", onSubmitRating)
       alert("Error: onSubmitRating is not a function. Please refresh the page.")
       return
     }
     
     setIsSubmitting(true)
     try {
-      // Call onSubmitRating callback and wait for it to complete (it's async and handles the API call)
-      console.log("Calling onSubmitRating with:", { rating, feedback })
-      console.log("About to await onSubmitRating...")
-      
-      // Call the function directly and log immediately
-      console.log("About to invoke onSubmitRating function...")
-      console.log("onSubmitRating.toString():", onSubmitRating.toString().substring(0, 200))
-      
-      // Invoke the function and check if it returns a Promise
       const promiseResult = onSubmitRating(rating, feedback)
-      console.log("onSubmitRating invoked, result:", promiseResult)
-      console.log("onSubmitRating invoked, result type:", typeof promiseResult)
-      console.log("Is Promise?", promiseResult instanceof Promise)
-      
-      // If it's not a Promise, wrap it
       const promise = promiseResult instanceof Promise ? promiseResult : Promise.resolve(promiseResult)
+      await promise
       
-      // Wait for the API call to complete successfully
-      const result = await promise
-      console.log("✅ onSubmitRating completed successfully, result:", result)
-      
-      // Only close modal and reset if submission was successful
-      // The modal will stay open if there's an error
       onOpenChange(false)
       setRating(0)
       setHoveredRating(0)
       setFeedback("")
     } catch (e) {
-      console.error("❌ Failed to submit rating in modal:", e)
-      console.error("Error stack:", e instanceof Error ? e.stack : "No stack trace")
-      // Don't close modal on error - keep it open so user can try again
-      // Error is already handled by parent component (handleSubmitRating)
-      // Don't show alert here, parent component handles it
+      // Error handled by parent component
     } finally {
       setIsSubmitting(false)
-      console.log("=== RATING MODAL: handleSubmit END ===")
     }
   }
 
@@ -222,10 +175,6 @@ export function RatingModal({ open, onOpenChange, session, onSubmitRating }: Rat
             </Button>
             <Button 
               onClick={(e) => {
-                console.log("🔘 Submit Rating button clicked!")
-                console.log("  Rating:", rating)
-                console.log("  IsSubmitting:", isSubmitting)
-                console.log("  Disabled:", rating === 0 || isSubmitting)
                 e.preventDefault()
                 handleSubmit()
               }} 

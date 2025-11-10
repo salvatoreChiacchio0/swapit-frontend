@@ -45,7 +45,6 @@ export function Dashboard() {
 
     const [refreshKey, setRefreshKey] = useState(0)
 
-  // Fetch both sent and received proposals
   const {
     data: sentProposals,
     loading: sentLoading,
@@ -64,27 +63,22 @@ export function Dashboard() {
     [user?.uid, refreshKey],
   )
 
-  // Fetch skills data
   const { data: skills } = useApiCall(() => apiClient.getSkills(), [])
 
-  // Combine all proposals
   const allProposals = [...(sentProposals || []), ...(receivedProposals || [])]
 
-  // Fetch feedbacks received by the user
   const {
     data: feedbacksReceived,
     loading: feedbacksReceivedLoading,
     error: feedbacksReceivedError,
   } = useApiCall(() => (user ? apiClient.getFeedbacksByReviewed(user.uid) : Promise.resolve([])), [user?.uid, refreshKey])
   
-  // Fetch feedbacks given by the user
   const {
     data: feedbacksGiven,
     loading: feedbacksGivenLoading,
     error: feedbacksGivenError,
   } = useApiCall(() => (user ? apiClient.getFeedbacksByReviewer(user.uid) : Promise.resolve([])), [user?.uid, refreshKey])
   
-  // Combine both for convenience
   const allFeedbacks = [...(feedbacksReceived || []), ...(feedbacksGiven || [])]
 
   useEffect(() => {
@@ -93,32 +87,17 @@ export function Dashboard() {
     }
   }, [activeTab])
 
-  // Ricarica i dati quando si entra nella tab "sessions"
   useEffect(() => {
     if (activeTab === 'sessions' && user) {
-      // Incrementa refreshKey per forzare il ricaricamento delle proposte
       setRefreshKey((prev) => prev + 1)
     }
   }, [activeTab, user])
 
-  // Ricarica i dati quando si entra nella tab "review-history"
   useEffect(() => {
     if (activeTab === 'review-history' && user) {
-      // Incrementa refreshKey per forzare il ricaricamento delle proposte e feedback
-      console.log('Review History tab opened - refreshing data...')
       setRefreshKey((prev) => prev + 1)
     }
   }, [activeTab, user])
-  
-  // Debug: log quando i feedback vengono caricati
-  useEffect(() => {
-    if (feedbacksGiven && feedbacksGiven.length > 0) {
-      console.log('FeedbacksGiven loaded:', feedbacksGiven.length, feedbacksGiven)
-    }
-    if (feedbacksReceived && feedbacksReceived.length > 0) {
-      console.log('FeedbacksReceived loaded:', feedbacksReceived.length, feedbacksReceived)
-    }
-  }, [feedbacksGiven, feedbacksReceived])
 
   if (!user) return null
 
@@ -129,20 +108,12 @@ export function Dashboard() {
   }
 
   const handleSubmitRating = async (rating: number, feedback: string) => {
-    console.log("=== DASHBOARD: handleSubmitRating START ===")
-    console.log("Received rating:", rating)
-    console.log("Received feedback:", feedback)
-    console.log("sessionToRate:", sessionToRate)
-    console.log("user:", user?.uid)
-    
     if (!sessionToRate || !user || !sessionToRate.partner?.id) {
-      console.error("❌ Missing data for rating submission:", { sessionToRate, user })
       alert("Missing data for rating submission. Please try again.")
       throw new Error("Missing data for rating submission")
     }
 
     if (rating === 0) {
-      console.error("❌ Rating is 0")
       alert("Please select a rating before submitting.")
       throw new Error("Rating is 0")
     }
@@ -150,37 +121,23 @@ export function Dashboard() {
     try {
       const feedbackData = {
         rating: rating,
-        review: feedback || "", // Allow empty review string
+        review: feedback || "",
         reviewerUid: user.uid,
         reviewedUid: sessionToRate.partner.id,
       }
       
-      console.log("📤 Preparing to call API with feedbackData:", feedbackData)
-      console.log("📤 API endpoint: POST /api/feedbacks")
-      console.log("📤 Full URL will be: http://localhost:8080/SwapItBe/api/feedbacks")
+      await apiClient.createFeedback(feedbackData)
       
-      // Wait for API call to complete successfully before doing anything else
-      const result = await apiClient.createFeedback(feedbackData)
-      console.log("✅ API call successful! Response:", result)
-      
-      // Only after successful API call:
-      // 1. Show success message
       toast({
         title: "Success",
         description: "Your review has been submitted successfully!",
         variant: "default",
       })
       
-      // 2. Refresh proposals to show updated data (this will trigger re-fetch)
       setRefreshKey((prev) => prev + 1)
-      
-      // 3. Close modal and clear session (modal will close via onOpenChange in RatingModal)
       setRatingModalOpen(false)
       setSessionToRate(null)
-      
-      console.log("=== DASHBOARD: handleSubmitRating END (SUCCESS) ===")
     } catch (error) {
-      console.error("❌ DASHBOARD: Failed to submit rating:", error)
       const errorMessage = error instanceof Error ? error.message : "Unknown error"
       toast({
         title: "Error",
@@ -188,19 +145,16 @@ export function Dashboard() {
         variant: "destructive",
       })
       alert(`Failed to submit rating: ${errorMessage}`)
-      console.log("=== DASHBOARD: handleSubmitRating END (ERROR) ===")
-      throw error // Re-throw so modal can handle it
+      throw error
     }
   }
 
   const openRatingModal = (proposal: any) => {
-    // Transform proposal to the format expected by RatingModal
     if (!proposal.receiver || !proposal.receiver.uid) {
       alert("Partner information is not available. Please try again in a moment.")
       return
     }
     
-    // Determine which skill was taught and which was learned based on proposal type
     const skillTaught = proposal.isSent
       ? proposal.skillOffered?.label || "Skill Offered"
       : proposal.skillRequested?.label || "Skill Requested"
@@ -221,7 +175,6 @@ export function Dashboard() {
       date: proposal.date,
     }
     
-    console.log("Opening rating modal with session data:", sessionData)
     setSessionToRate(sessionData)
     setRatingModalOpen(true)
   }
@@ -244,26 +197,21 @@ export function Dashboard() {
 
   
 
-  // Helper function to check if user has already rated a proposal
   const hasUserRatedProposal = (proposal: any) => {
     if (!user || !feedbacksGiven || !proposal.receiver?.uid) return false
     return feedbacksGiven.some((f: any) => f.reviewedUid === proposal.receiver.uid)                                                                             
   }
 
-  // State for enriched proposals with user and skill data
   const [enrichedProposals, setEnrichedProposals] = useState<any[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [reviewersMap, setReviewersMap] = useState<Record<string, any>>({})
 
-  // Enrich proposals with user and skill data
   useEffect(() => {
     if (!sentProposals || !receivedProposals || !skills) return
 
     const enrichProposals = async () => {
-      // Combine proposals
       const allProposals = [...(sentProposals || []), ...(receivedProposals || [])]
       
-      // Collect unique user UIDs and skill IDs
       const userUids = new Set<string>()
       const skillIds = new Set<number>()
       
@@ -274,7 +222,6 @@ export function Dashboard() {
         skillIds.add(p.skillRequestedId)
       })
 
-      // Fetch all users and create a map
       const userMap = new Map<string, any>()
       setLoadingUsers(true)
       try {
@@ -288,7 +235,7 @@ export function Dashboard() {
                 profilePicture: normalizeProfilePicture(userData.profilePicture),
               })
             } catch (e) {
-              console.error(`Failed to fetch user ${uid}:`, e)
+              // Failed to fetch user
             }
           })
         )
@@ -296,20 +243,17 @@ export function Dashboard() {
         setLoadingUsers(false)
       }
 
-      // Create skill map
       const skillMap = new Map<number, any>()
       skills.forEach((skill) => {
         skillMap.set(skill.id, { id: skill.id, label: skill.label })
       })
 
-      // Map proposals with enriched data
       const enriched = allProposals.map((p: any) => {
         const requestUser = userMap.get(p.requestUserUid)
         const offerUser = userMap.get(p.offerUserUid)
         const skillOffered = skillMap.get(p.skillOfferedId)
         const skillRequested = skillMap.get(p.skillRequestedId)
         
-        // Determine if this is a sent or received proposal from current user's perspective
         const isSent = p.requestUserUid === user?.uid
         const receiver = isSent ? offerUser : requestUser
         
@@ -330,7 +274,6 @@ export function Dashboard() {
     enrichProposals()
   }, [sentProposals, receivedProposals, skills, user?.uid])
 
-  // Load reviewer information for received feedbacks
   useEffect(() => {
     if (!feedbacksReceived || !user) return
 
@@ -352,9 +295,9 @@ export function Dashboard() {
               username: reviewerData.username,
               profilePicture: normalizeProfilePicture(reviewerData.profilePicture),
             }
-          } catch (e) {
-            console.error(`Failed to fetch reviewer ${uid}:`, e)
-          }
+            } catch (e) {
+              // Failed to fetch reviewer
+            }
         })
       )
       setReviewersMap(reviewers)
@@ -375,7 +318,6 @@ export function Dashboard() {
     timestamp: new Date(p.creationTime || Date.now()).toLocaleDateString(),
   }))
 
-  // Loading state
   if (sentLoading || receivedLoading || feedbacksReceivedLoading || feedbacksGivenLoading || loadingUsers) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -387,7 +329,6 @@ export function Dashboard() {
     )
   }
 
-  // Error state
   if (sentError || receivedError || feedbacksReceivedError || feedbacksGivenError) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -407,7 +348,6 @@ export function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
       <header className="bg-white border-b sticky top-0 z-40">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -445,7 +385,6 @@ export function Dashboard() {
           </TabsList>
 
           <TabsContent value="home" className="space-y-6">
-            {/* Welcome Section */}
             <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg p-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -459,7 +398,6 @@ export function Dashboard() {
               </div>
             </div>
 
-            {/* Quick Stats */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Card>
                 <CardContent className="p-6">
@@ -496,7 +434,6 @@ export function Dashboard() {
                             </Card>
             </div>
 
-            {/* Upcoming Sessions */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -529,7 +466,6 @@ export function Dashboard() {
               </CardContent>
             </Card>
 
-            {/* Recent Activity */}
             <Card>
               <CardHeader>
                 <CardTitle>Recent Activity</CardTitle>
@@ -577,7 +513,6 @@ export function Dashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-6">
-                  {/* Upcoming Sessions */}
                   <div>
                     <h3 className="text-lg font-semibold mb-4">Upcoming Sessions</h3>
                     {upcomingProposals.length === 0 ? (
@@ -632,7 +567,6 @@ export function Dashboard() {
                     )}
                   </div>
 
-                  {/* Completed Sessions */}
                   <div>
                     <h3 className="text-lg font-semibold mb-4">Completed Sessions</h3>
                     {completedProposals.length === 0 ? (
@@ -752,26 +686,6 @@ export function Dashboard() {
                           })
                           
                           const hasReviewed = !!userFeedback
-                          
-                          // Debug logging
-                          console.log('Review History - Proposal:', {
-                            id: p.id,
-                            partnerUid,
-                            userUid: user?.uid,
-                            isSent: p.isSent,
-                            offerUserUid: p.offerUser?.uid,
-                            requestUserUid: p.requestUser?.uid,
-                            feedbacksGivenCount: feedbacksGiven?.length || 0,
-                            hasReviewed,
-                            userFeedback: userFeedback ? {
-                              id: userFeedback.id,
-                              rating: userFeedback.rating,
-                              review: userFeedback.review,
-                              reviewerUid: userFeedback.reviewerUid,
-                              reviewedUid: userFeedback.reviewedUid
-                            } : null,
-                            allFeedbacksGiven: feedbacksGiven
-                          })
                           
                           return (
                             <div key={p.id} className="flex items-center gap-4 p-4 border rounded-lg bg-green-50">                                                
@@ -909,8 +823,6 @@ export function Dashboard() {
           <RatingModal
             open={ratingModalOpen}
             onOpenChange={(open) => {
-              // Allow closing only if user explicitly closes (clicking X or Cancel)
-              // The modal will be closed programmatically after successful submission in handleSubmitRating
               if (!open) {
                 setRatingModalOpen(false)
                 setSessionToRate(null)
@@ -918,25 +830,14 @@ export function Dashboard() {
             }}
             session={sessionToRate}
             onSubmitRating={async (rating: number, feedback: string) => {
-              console.log("🔗🔗🔗 RatingModal onSubmitRating callback called directly")
-              console.log("  Rating received:", rating)
-              console.log("  Feedback received:", feedback)
-              console.log("  handleSubmitRating function:", handleSubmitRating)
-              console.log("  handleSubmitRating type:", typeof handleSubmitRating)
-              console.log("  About to call handleSubmitRating with:", { rating, feedback })
-              
               if (typeof handleSubmitRating !== 'function') {
-                console.error("❌ handleSubmitRating is not a function!")
                 throw new Error("handleSubmitRating is not a function")
               }
               
               try {
-                console.log("  Calling handleSubmitRating now...")
                 const result = await handleSubmitRating(rating, feedback)
-                console.log("  ✅ handleSubmitRating returned:", result)
                 return result
               } catch (error) {
-                console.error("  ❌ handleSubmitRating threw error:", error)
                 throw error
               }
             }}

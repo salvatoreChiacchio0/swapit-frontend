@@ -214,7 +214,6 @@ export function SkillMatcher() {
         cache.set(uid, bundle)
         return bundle
       } catch (error) {
-        console.error(`Failed to load data for user ${uid}`, error)
         return null
       }
     },
@@ -273,7 +272,6 @@ export function SkillMatcher() {
       setSkillFilteredMatches(null)
       setMatchesError(null)
     } catch (error) {
-      console.error("Failed to load all users", error)
       setBaseMatches([])
       setMatchesError("Impossibile caricare gli utenti al momento. Riprova più tardi.")
       toast({
@@ -372,7 +370,6 @@ export function SkillMatcher() {
         const matchList = buildMatchesFromBundles(Array.from(uniqueBundlesMap.values()))
         setSkillFilteredMatches(matchList)
       } catch (error) {
-        console.error(`Failed to load users for skill ${skill.id}`, error)
         toast({
           title: "Errore",
           description: "Non è stato possibile filtrare gli utenti per la skill selezionata.",
@@ -472,7 +469,6 @@ export function SkillMatcher() {
               const average = feedbacks.length > 0 ? Math.round((total / feedbacks.length) * 10) / 10 : null
               return [match.id, average] as const
             } catch (error) {
-              console.error(`Failed to load rating for user ${match.id}`, error)
               return [match.id, null] as const
             }
           }),
@@ -578,7 +574,6 @@ export function SkillMatcher() {
       setProposalSkillRequestedId(null)
       setIsProposalDialogOpen(false)
     } catch (error) {
-      console.error("Failed to send proposal:", error)
       toast({
         title: "Error",
         description: "Failed to send proposal. Please try again.",

@@ -120,7 +120,6 @@ const mockMessages = [
   },
 ]
 
-// (rimosse costanti obsolete userId/token)
 const CHAT_API_URL = "http://localhost:3001/chat";
 
 export interface ChatMessage {
@@ -143,11 +142,9 @@ interface ChatSectionProps {
 }
 
 export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
-  // Auth Firebase
   const [idToken, setIdToken] = useState<string|null>(null);
   const [userId, setUserId] = useState<string|null>(null);
 
-  // Chat state
   const [selectedConversation, setSelectedConversation] = useState<Conversation|null>(null);
   const [newMessage, setNewMessage] = useState("");
   const [showUserDropdown, setShowUserDropdown] = useState(false);
@@ -161,7 +158,6 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
   const selectedConversationRef = useRef<Conversation | null>(null);
   const idTokenRef = useRef<string | null>(null);
 
-  // Osserva lo stato Firebase: quando loggato, prendi uid e idToken
   useEffect(() => {
     const auth = getAuth();
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -170,7 +166,6 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
         setIdToken(token);
         setUserId(user.uid);
       } else {
-        // Disconnessione socket al logout
         try { disconnectChat() } catch {}
         socketConnectedRef.current = false;
         setIdToken(null);
@@ -183,29 +178,22 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
     return () => unsub();
   }, []);
 
-  // Helper per immagini profilo: se base64 senza prefix, aggiunge data:image/jpeg;base64,
-  // Gestisce anche il caso in cui il backend restituisce la stringa data URL codificata in base64
   function buildImageSrc(src?: string): string {
     if (!src) return "/placeholder.svg";
     const lower = src.toLowerCase();
     if (lower.startsWith("http://") || lower.startsWith("https://") || lower.startsWith("data:")) return src;
     
-    // Il backend potrebbe restituire la stringa data URL codificata in base64
-    // Prova a decodificarla per vedere se contiene un data URL
     try {
       const decoded = atob(src);
       if (decoded.startsWith("data:image")) {
         return decoded;
       }
     } catch (e) {
-      // Se la decodifica fallisce, non è base64 valido o non è un data URL codificato
-      // Continua con la logica normale
     }
     
     return `data:image/jpeg;base64,${src}`;
   }
 
-  // Carica chat dopo login Firebase
   useEffect(() => {
     if (!idToken || !userId) return;
     async function fetchChats() {
@@ -242,7 +230,6 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
     }
     fetchChats();
 
-    // Carica anche tutti gli utenti per mappare nomi/avatar in lista conversazioni
     apiClient.getUsers()
       .then((users: any[]) => {
         setAllUsers(users);
@@ -253,11 +240,9 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
       .catch(() => { setAllUsers([]); setUsersById({}); });
   }, [idToken, userId]);
 
-  // Seleziona automaticamente l'utente quando initialUserId è fornito
   useEffect(() => {
     if (!initialUserId) return;
     
-    // Se l'utente è già stato caricato
     if (usersById[initialUserId]) {
       const user = usersById[initialUserId];
       const existing = conversations.find(c => c.userId === initialUserId);
@@ -266,7 +251,6 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
         setMessages(existing.messages);
         setSelectedUser(user);
       } else {
-        // Crea una nuova conversazione anche se non ci sono ancora messaggi
         const newConv: Conversation = { userId: initialUserId, messages: [] };
         setConversations(prev => {
           // Evita duplicati
@@ -278,7 +262,6 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
         setSelectedUser(user);
       }
     } else if (Object.keys(usersById).length > 0) {
-      // Se gli utenti sono stati caricati ma questo utente non esiste, prova a caricarlo
       apiClient.getUserById(initialUserId)
         .then(user => {
           const userData = { uid: user.uid, username: user.username, profilePicture: user.profilePicture };
@@ -299,13 +282,10 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
             setSelectedUser(userData);
           }
         })
-        .catch(() => {
-          // Utente non trovato, ignora
-        });
+        .catch(() => {});
     }
   }, [initialUserId, usersById, conversations]);
 
-  // Refetch utility per riconnessioni
   const refetchChats = async () => {
     if (!idToken || !userId) return;
     try {
@@ -325,15 +305,12 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
     } catch {}
   };
 
-  // Aggiorna il ref quando idToken cambia
   useEffect(() => {
     idTokenRef.current = idToken;
   }, [idToken]);
 
-  // Connessione socket autenticata
   useEffect(() => {
     if (!idToken || !userId) {
-      // Se non c'è token, disconnetti
       if (socketConnectedRef.current) {
         disconnectChat();
         socketConnectedRef.current = false;
@@ -348,32 +325,19 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
         const socket = await connectChat();
         if (!isMounted) return;
         
-        console.log('Socket connected:', socket.connected, 'Socket ID:', socket.id);
-        
         socketConnectedRef.current = true;
         await refetchChats();
         
-        // Rimuovi handler precedenti e registra il nuovo
-        socket.off("receive"); // Rimuovi tutti i listener precedenti
+        socket.off("receive");
         
-        // Aggiungi listener per eventi di connessione/disconnessione per debug
-        socket.on("connect", () => {
-          console.log('Socket connected event:', socket.id);
-        });
+        socket.on("connect", () => {});
         
-        socket.on("disconnect", (reason) => {
-          console.log('Socket disconnected:', reason);
-        });
+        socket.on("disconnect", () => {});
         
-        socket.on("connect_error", (error) => {
-          console.error('Socket connection error:', error);
-        });
+        socket.on("connect_error", () => {});
         
-        // Handler principale per ricevere messaggi
         socket.on("receive", (incoming: any) => {
-          console.log('Received message from socket:', incoming);
           if (!isMounted || !idTokenRef.current) {
-            console.log('Ignoring message - component unmounted or no token');
             return;
           }
           const message = {
@@ -381,9 +345,7 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
             timestamp: incoming?.timestamp ?? new Date(),
             isFromMe: incoming?.senderId === userId,
           };
-          console.log('Processing message:', message, 'Current userId:', userId);
           
-          // Aggiorna sempre le conversazioni (anche se non è la conversazione selezionata)
           setConversations((prev) => {
             const updated = prev.map(c => {
               if (c.userId === message.senderId || c.userId === message.receiverId) {
@@ -416,13 +378,9 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
             return updated;
           });
           
-          // Se la conversazione corrente corrisponde, aggiungi anche ai messaggi visibili
           const current = selectedConversationRef.current;
           if (current && (message.senderId === current.userId || message.receiverId === current.userId)) {
-            console.log('Adding message to current conversation');
             setMessages((prev) => {
-              // Controlla se il messaggio esiste già (evita duplicati)
-              // Se è un messaggio che abbiamo inviato, sostituisci quello ottimistico
               const existingIndex = prev.findIndex(m => 
                 m.id === message.id || 
                 (m.id?.toString().startsWith('temp-') && 
@@ -432,18 +390,14 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
               );
               
               if (existingIndex >= 0) {
-                // Sostituisci il messaggio esistente (rimuovi ottimistico, aggiungi quello dal server)
                 const updated = [...prev];
                 updated[existingIndex] = message;
                 return updated;
               } else {
-                // Nuovo messaggio
                 return [...prev, message];
               }
             });
           } else if (message.senderId === userId) {
-            // Se abbiamo inviato un messaggio ma non è la conversazione corrente,
-            // rimuovi comunque il messaggio ottimistico dalle conversazioni
             setConversations((prev) => prev.map(c => {
               if (c.userId === message.receiverId) {
                 return {
@@ -456,7 +410,6 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
                     }
                     return m;
                   }).filter(m => {
-                    // Rimuovi duplicati
                     if (m.id?.toString().startsWith('temp-')) {
                       return !c.messages.some(existing => 
                         existing.id === message.id && 
@@ -471,17 +424,13 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
             }));
           }
         });
-        
-        console.log('Socket receive handler registered');
       } catch (e) {
-        console.error('Chat connect failed', e);
         socketConnectedRef.current = false;
       }
     })();
     
     return () => {
       isMounted = false;
-      // Disconnette solo se il token è diventato null (logout)
       if (!idTokenRef.current && socketConnectedRef.current) {
         disconnectChat();
         socketConnectedRef.current = false;
@@ -489,7 +438,6 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
     };
   }, [idToken, userId]);
 
-  // Search utenti: usa swapit-be già incapsulato in apiClient.getUsers()
   useEffect(() => {
     if (!searchQuery) { setAllUsers([]); return; }
     apiClient.getUsers()
@@ -519,7 +467,6 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
       const content = newMessage;
       setNewMessage("");
       
-      // Aggiungi messaggio ottimistico (verrà sostituito quando arriva dal server)
       const tempId = `temp-${Date.now()}`;
       const optimistic = {
         id: tempId,
@@ -530,8 +477,6 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
         isFromMe: true,
       } as any;
       
-      console.log('Sending message optimistically:', optimistic);
-      
       setMessages((prev) => [...prev, optimistic]);
       setConversations((prev) => prev.map(c =>
         c.userId === selectedConversation.userId
@@ -541,10 +486,7 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
       
       try {
         await sendWsMessage(selectedConversation.userId, content);
-        console.log('Message sent via socket');
       } catch (e) {
-        console.error('send failed', e);
-        // Rimuovi il messaggio ottimistico se l'invio fallisce
         setMessages((prev) => prev.filter(m => m.id !== tempId));
         setConversations((prev) => prev.map(c =>
           c.userId === selectedConversation.userId
@@ -555,7 +497,6 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
     }
   };
 
-  // Se non autenticato su Firebase, chiedi di effettuare il login nella app principale
   if (!idToken) {
     return (
       <div className="flex-1 flex items-center justify-center text-gray-500">
@@ -604,14 +545,12 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
 
   return (
     <div className="h-[calc(100vh-200px)] flex bg-white rounded-lg border overflow-hidden">
-      {/* Conversations List (sinistra) */}
       <div className="w-1/3 border-r flex flex-col">
         <div className="p-4 border-b">
           <div className="flex items-center gap-2 mb-4">
             <MessageSquare className="w-5 h-5 text-blue-600" />
             <h2 className="text-lg font-semibold">Messages</h2>
           </div>
-          {/* SEARCH FIELD UTENTI */}
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
             <Input
@@ -625,7 +564,6 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
               className="pl-10"
               autoComplete="off"
             />
-            {/* User dropdown su ricerca */}
             {showUserDropdown && filteredUsers.length > 0 && (
               <div className="absolute w-full bg-white border rounded shadow mt-1 max-h-60 overflow-y-auto z-20">
                 {filteredUsers.filter(u => !userId || u.uid !== userId).map((user) => (
@@ -673,7 +611,6 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
                       <span className="text-xs text-gray-500">{conversation.messages.at(-1) ? formatTime(String(conversation.messages.at(-1)!.timestamp)) : ""}</span>
                     </div>
                     <p className="text-sm text-gray-600 truncate mb-2">{conversation.messages.at(-1)?.content || conversation.messages.at(-1)?.text || ""}</p>
-                    {/* Qui puoi mostrare badge, unread, ecc. */}
                   </div>
                 </div>
               </div>
@@ -682,11 +619,9 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
         </ScrollArea>
       </div>
 
-      {/* Chat Area */}
       <div className="flex-1 flex flex-col">
         {selectedConversation ? (
           <>
-            {/* Chat Header */}
             <div className="p-4 border-b flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="relative">
@@ -725,7 +660,6 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
               </div>
             </div>
 
-            {/* Messages */}
             <ScrollArea className="flex-1 p-4">
               <div className="space-y-4">
                 {messages.map((message: ChatMessage) => (
@@ -745,7 +679,6 @@ export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
               </div>
             </ScrollArea>
 
-            {/* Message Input */}
             <div className="p-4 border-t">
               <div className="flex items-center gap-2">
                 <Button size="sm" variant="ghost">
