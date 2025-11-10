@@ -3,7 +3,7 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
 import { apiClient, type User } from "@/lib/api"
 import { createUserWithEmailAndPassword } from "firebase/auth"
-import { signInWithEmailAndPassword } from "firebase/auth"
+import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth"
 import { auth } from "@/lib/firebase"
 import { connectChat, disconnectChat } from "@/lib/chatClient"
 import { toast } from "@/hooks/use-toast"
@@ -35,41 +35,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
   const router = useRouter();
 
-  useEffect(() => {
-    // All'avvio: nessun controllo su localStorage; si resta disconnessi se non c'è login esplicito
-    setLoading(false)
-  }, [])
-
-  const login = async (email: string, password: string) => {
-    setLoading(true)
-    setError(null)
-
+  // Funzione helper per caricare i dati utente dal backend
+  const loadUserData = async (firebaseUser: any) => {
     try {
-      // 1. Login su Firebase Auth
-      const userCredential = await signInWithEmailAndPassword(auth, email, password)
-      const firebaseUser = userCredential.user
-      console.log(firebaseUser)
-      // 2. Recupera utente dal backend tramite uid Firebase
+      // Recupera utente dal backend tramite uid Firebase
       const response = await fetch(`http://localhost:8080/SwapItBe/api/users/${firebaseUser.uid}`)
       if (!response.ok) {
-        const errMsg = "Utente non trovato nel backend"
-        toast({ title: "Login fallito", description: errMsg, variant: "destructive" })
-        setError(errMsg)
-        throw new Error(errMsg)
+        console.log("Utente non trovato nel backend")
+        return null
       }
-      // Support both { users: [user] } and direct user object payloads
+      
       const jsonPayload = await response.json()
       const payloadAny = jsonPayload as any
       const foundUser = Array.isArray(payloadAny?.users) ? payloadAny.users[0] : payloadAny
-      console.log(foundUser)
+      
       if (!foundUser) {
-        const errMsg = "Utente non trovato nel backend"
-        toast({ title: "Login fallito", description: errMsg, variant: "destructive" })
-        setError(errMsg)
-        throw new Error(errMsg)
+        console.log("Utente non trovato nel backend")
+        return null
       }
 
-      // 3. Recupera skills, feedback e swap (with error handling)
+      // Recupera skills, feedback e swap (with error handling)
       const backendUserUid = foundUser.uid
       let skillsWanted: string[] = []
       let skillsOffered: string[] = []
@@ -98,15 +83,72 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (e) {
         console.log("No proposals found for user yet")
       }
+      
       const profilePicture = normalizeProfilePicture(foundUser.profilePicture)
       const authUser: AuthUser = {
         ...foundUser,
-        // canonical identifier is uid in backend
         skillsOffered,
         skillsWanted,
         rating: Math.round(rating * 10) / 10,
         completedSwaps,
         profilePicture,
+      }
+
+      return authUser
+    } catch (error) {
+      console.error("Error loading user data:", error)
+      return null
+    }
+  }
+
+  useEffect(() => {
+    // Listener per lo stato di autenticazione Firebase
+    // Questo rileva automaticamente se l'utente è già loggato quando la pagina viene ricaricata
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // Utente autenticato: carica i dati dal backend
+        setLoading(true)
+        const userData = await loadUserData(firebaseUser)
+        if (userData) {
+          setUser(userData)
+          try { 
+            await connectChat() 
+          } catch (e) { 
+            console.warn('Chat connect failed', e) 
+          }
+        } else {
+          // Se i dati non possono essere caricati, disconnetti
+          setUser(null)
+        }
+        setLoading(false)
+      } else {
+        // Nessun utente autenticato
+        setUser(null)
+        setLoading(false)
+      }
+    })
+
+    // Cleanup del listener quando il componente viene smontato
+    return () => unsubscribe()
+  }, [])
+
+  const login = async (email: string, password: string) => {
+    setLoading(true)
+    setError(null)
+
+    try {
+      // 1. Login su Firebase Auth
+      const userCredential = await signInWithEmailAndPassword(auth, email, password)
+      const firebaseUser = userCredential.user
+      console.log(firebaseUser)
+      
+      // 2. Carica i dati utente usando la funzione helper
+      const authUser = await loadUserData(firebaseUser)
+      if (!authUser) {
+        const errMsg = "Utente non trovato nel backend"
+        toast({ title: "Login fallito", description: errMsg, variant: "destructive" })
+        setError(errMsg)
+        throw new Error(errMsg)
       }
 
       setUser(authUser)
@@ -121,6 +163,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           msg = "Utente non trovato."
         } else if (error.message.includes("Failed to fetch")) {
           msg = "Impossibile connettersi al backend."
+        } else if (error.message.includes("Utente non trovato nel backend")) {
+          msg = error.message
         }
       }
       toast({ title: "Errore login", description: msg, variant: "destructive" })
@@ -226,7 +270,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      // Disconnetti da Firebase Auth
+      await signOut(auth)
+    } catch (error) {
+      console.error("Error signing out:", error)
+    }
     setUser(null)
     setError(null)
     try { disconnectChat() } catch {}

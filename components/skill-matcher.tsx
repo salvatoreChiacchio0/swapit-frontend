@@ -86,6 +86,13 @@ export function SkillMatcher() {
   const [proposalSkillOfferedId, setProposalSkillOfferedId] = useState<number | null>(null)
   const [proposalSkillRequestedId, setProposalSkillRequestedId] = useState<number | null>(null)
   const [isSubmittingProposal, setIsSubmittingProposal] = useState(false)
+  
+  // Validazione orari
+  const isTimeValid = proposalStartTime && proposalEndTime ? (() => {
+    const start = new Date(`2000-01-01T${proposalStartTime}`)
+    const end = new Date(`2000-01-01T${proposalEndTime}`)
+    return end > start
+  })() : true
 
   // Fetch all users and their skills from backend
   const {
@@ -517,6 +524,20 @@ export function SkillMatcher() {
       return
     }
 
+    // Validazione: endTime deve essere maggiore di startTime
+    if (proposalStartTime && proposalEndTime) {
+      const start = new Date(`2000-01-01T${proposalStartTime}`)
+      const end = new Date(`2000-01-01T${proposalEndTime}`)
+      if (end <= start) {
+        toast({
+          title: "Error",
+          description: "End time must be greater than start time",
+          variant: "destructive",
+        })
+        return
+      }
+    }
+
     if (!proposalSkillOfferedId || !proposalSkillRequestedId) {
       toast({
         title: "Error",
@@ -830,7 +851,12 @@ export function SkillMatcher() {
                 type="time"
                 value={proposalEndTime}
                 onChange={(e) => setProposalEndTime(e.target.value)}
+                min={proposalStartTime || undefined}
+                className={!isTimeValid && proposalStartTime && proposalEndTime ? "border-red-500" : ""}
               />
+              {!isTimeValid && proposalStartTime && proposalEndTime && (
+                <p className="text-sm text-red-500">End time must be greater than start time</p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -883,7 +909,10 @@ export function SkillMatcher() {
             <Button variant="outline" onClick={() => setIsProposalDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSendProposal} disabled={isSubmittingProposal}>
+            <Button 
+              onClick={handleSendProposal} 
+              disabled={isSubmittingProposal || !isTimeValid}
+            >
               {isSubmittingProposal ? "Sending..." : "Send Proposal"}
             </Button>
           </DialogFooter>

@@ -105,8 +105,18 @@ class ApiClient {
       ...options,
     }
 
+    console.log("🌐 ApiClient.request - Making fetch call:")
+    console.log("  URL:", url)
+    console.log("  Method:", config.method || "GET")
+    console.log("  Headers:", config.headers)
+    console.log("  Body:", config.body)
+
     try {
       const response = await fetch(url, config)
+      console.log("📥 ApiClient.request - Response received:")
+      console.log("  Status:", response.status)
+      console.log("  StatusText:", response.statusText)
+      console.log("  OK:", response.ok)
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
@@ -317,10 +327,22 @@ class ApiClient {
   }
 
   async createFeedback(feedbackData: { rating: number; review: string; reviewerUid: string; reviewedUid: string }): Promise<Feedback> {
-    return this.request<Feedback>("/feedbacks", {
-      method: "POST",
-      body: JSON.stringify(feedbackData),
-    })
+    console.log("📤 ApiClient.createFeedback called with:", feedbackData)
+    console.log("📤 Endpoint: /feedbacks")
+    console.log("📤 Method: POST")
+    console.log("📤 Body (stringified):", JSON.stringify(feedbackData))
+    
+    try {
+      const result = await this.request<Feedback>("/feedbacks", {
+        method: "POST",
+        body: JSON.stringify(feedbackData),
+      })
+      console.log("✅ ApiClient.createFeedback success:", result)
+      return result
+    } catch (error) {
+      console.error("❌ ApiClient.createFeedback error:", error)
+      throw error
+    }
   }
 
   async updateFeedback(id: number, feedbackData: { rating: number; review: string; reviewerUid: string; reviewedUid: string }): Promise<Feedback> {

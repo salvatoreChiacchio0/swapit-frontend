@@ -23,7 +23,7 @@ interface RatingModalProps {
     skillLearned: string
     date: string
   }
-  onSubmitRating: (rating: number, feedback: string) => void
+  onSubmitRating: (rating: number, feedback: string) => Promise<void>
 }
 
 export function RatingModal({ open, onOpenChange, session, onSubmitRating }: RatingModalProps) {                                                                
@@ -38,6 +38,8 @@ export function RatingModal({ open, onOpenChange, session, onSubmitRating }: Rat
       console.log("RatingModal opened with session:", session)
       console.log("Partner data:", session.partner)
       console.log("User data:", user)
+      console.log("onSubmitRating prop:", onSubmitRating)
+      console.log("onSubmitRating type:", typeof onSubmitRating)
     } else {
       // Reset form when modal closes
       setRating(0)
@@ -48,37 +50,79 @@ export function RatingModal({ open, onOpenChange, session, onSubmitRating }: Rat
   }, [open])
 
   const handleSubmit = async () => {
-    console.log("handleSubmit called", { rating, user: user?.uid, partnerId: session.partner?.id, feedback })
+    console.log("=== RATING MODAL: handleSubmit START ===")
+    console.log("Rating:", rating)
+    console.log("Feedback:", feedback)
+    console.log("User:", user?.uid)
+    console.log("Partner ID:", session.partner?.id)
+    console.log("Session:", session)
     
     if (rating === 0) {
-      console.log("Rating is 0, returning")
+      console.log("❌ Rating is 0, returning early")
+      alert("Please select a rating before submitting.")
       return
     }
     
     if (!user) {
-      console.log("User is not available, returning")
+      console.log("❌ User is not available, returning early")
+      alert("User is not available. Please try again.")
       return
     }
     
     if (!session.partner?.id) {
-      console.log("Partner ID is not available", { partner: session.partner })
+      console.log("❌ Partner ID is not available", { partner: session.partner })
       alert("Partner information is missing. Please try again.")
       return
     }
 
+    console.log("✅ All validations passed, calling onSubmitRating...")
+    console.log("onSubmitRating type:", typeof onSubmitRating)
+    console.log("onSubmitRating function:", onSubmitRating)
+    
+    if (typeof onSubmitRating !== 'function') {
+      console.error("❌ onSubmitRating is not a function!", onSubmitRating)
+      alert("Error: onSubmitRating is not a function. Please refresh the page.")
+      return
+    }
+    
     setIsSubmitting(true)
     try {
-      // Only call onSubmitRating callback, let the parent component handle the API call
-      onSubmitRating(rating, feedback)
+      // Call onSubmitRating callback and wait for it to complete (it's async and handles the API call)
+      console.log("Calling onSubmitRating with:", { rating, feedback })
+      console.log("About to await onSubmitRating...")
+      
+      // Call the function directly and log immediately
+      console.log("About to invoke onSubmitRating function...")
+      console.log("onSubmitRating.toString():", onSubmitRating.toString().substring(0, 200))
+      
+      // Invoke the function and check if it returns a Promise
+      const promiseResult = onSubmitRating(rating, feedback)
+      console.log("onSubmitRating invoked, result:", promiseResult)
+      console.log("onSubmitRating invoked, result type:", typeof promiseResult)
+      console.log("Is Promise?", promiseResult instanceof Promise)
+      
+      // If it's not a Promise, wrap it
+      const promise = promiseResult instanceof Promise ? promiseResult : Promise.resolve(promiseResult)
+      
+      // Wait for the API call to complete successfully
+      const result = await promise
+      console.log("✅ onSubmitRating completed successfully, result:", result)
+      
+      // Only close modal and reset if submission was successful
+      // The modal will stay open if there's an error
       onOpenChange(false)
       setRating(0)
       setHoveredRating(0)
       setFeedback("")
     } catch (e) {
-      console.error("Failed to submit rating:", e)
-      alert(`Failed to submit rating: ${e instanceof Error ? e.message : "Unknown error"}`)
+      console.error("❌ Failed to submit rating in modal:", e)
+      console.error("Error stack:", e instanceof Error ? e.stack : "No stack trace")
+      // Don't close modal on error - keep it open so user can try again
+      // Error is already handled by parent component (handleSubmitRating)
+      // Don't show alert here, parent component handles it
     } finally {
       setIsSubmitting(false)
+      console.log("=== RATING MODAL: handleSubmit END ===")
     }
   }
 
@@ -176,7 +220,18 @@ export function RatingModal({ open, onOpenChange, session, onSubmitRating }: Rat
             <Button variant="outline" onClick={() => onOpenChange(false)} className="flex-1 bg-transparent">
               Cancel
             </Button>
-            <Button onClick={handleSubmit} disabled={rating === 0 || isSubmitting} className="flex-1">
+            <Button 
+              onClick={(e) => {
+                console.log("🔘 Submit Rating button clicked!")
+                console.log("  Rating:", rating)
+                console.log("  IsSubmitting:", isSubmitting)
+                console.log("  Disabled:", rating === 0 || isSubmitting)
+                e.preventDefault()
+                handleSubmit()
+              }} 
+              disabled={rating === 0 || isSubmitting} 
+              className="flex-1"
+            >
               {isSubmitting ? "Submitting..." : "Submit Rating"}
             </Button>
           </div>

@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "@/hooks/use-auth"
 import { useApiCall, apiClient } from "@/lib/api"
 import { normalizeProfilePicture } from "@/lib/utils"
+import { toast } from "@/hooks/use-toast"
 import {
   Users,
   Calendar,
@@ -40,6 +41,7 @@ export function Dashboard() {
   const [ratingModalOpen, setRatingModalOpen] = useState(false)
   const [createSwapModalOpen, setCreateSwapModalOpen] = useState(false)
   const [sessionToRate, setSessionToRate] = useState<any>(null)
+  const [chatInitialUserId, setChatInitialUserId] = useState<string | null>(null)
 
     const [refreshKey, setRefreshKey] = useState(0)
 
@@ -91,6 +93,33 @@ export function Dashboard() {
     }
   }, [activeTab])
 
+  // Ricarica i dati quando si entra nella tab "sessions"
+  useEffect(() => {
+    if (activeTab === 'sessions' && user) {
+      // Incrementa refreshKey per forzare il ricaricamento delle proposte
+      setRefreshKey((prev) => prev + 1)
+    }
+  }, [activeTab, user])
+
+  // Ricarica i dati quando si entra nella tab "review-history"
+  useEffect(() => {
+    if (activeTab === 'review-history' && user) {
+      // Incrementa refreshKey per forzare il ricaricamento delle proposte e feedback
+      console.log('Review History tab opened - refreshing data...')
+      setRefreshKey((prev) => prev + 1)
+    }
+  }, [activeTab, user])
+  
+  // Debug: log quando i feedback vengono caricati
+  useEffect(() => {
+    if (feedbacksGiven && feedbacksGiven.length > 0) {
+      console.log('FeedbacksGiven loaded:', feedbacksGiven.length, feedbacksGiven)
+    }
+    if (feedbacksReceived && feedbacksReceived.length > 0) {
+      console.log('FeedbacksReceived loaded:', feedbacksReceived.length, feedbacksReceived)
+    }
+  }, [feedbacksGiven, feedbacksReceived])
+
   if (!user) return null
 
   const needsProfileSetup = user.skillsOffered.length === 0 && user.skillsWanted.length === 0
@@ -99,31 +128,68 @@ export function Dashboard() {
     return <ProfileSetup />
   }
 
-    const handleSubmitRating = async (rating: number, feedback: string) => {      
+  const handleSubmitRating = async (rating: number, feedback: string) => {
+    console.log("=== DASHBOARD: handleSubmitRating START ===")
+    console.log("Received rating:", rating)
+    console.log("Received feedback:", feedback)
+    console.log("sessionToRate:", sessionToRate)
+    console.log("user:", user?.uid)
+    
     if (!sessionToRate || !user || !sessionToRate.partner?.id) {
-      console.error("Missing data for rating submission:", { sessionToRate, user })
-      return
+      console.error("❌ Missing data for rating submission:", { sessionToRate, user })
+      alert("Missing data for rating submission. Please try again.")
+      throw new Error("Missing data for rating submission")
+    }
+
+    if (rating === 0) {
+      console.error("❌ Rating is 0")
+      alert("Please select a rating before submitting.")
+      throw new Error("Rating is 0")
     }
 
     try {
       const feedbackData = {
-        rating,
-        review: feedback,
+        rating: rating,
+        review: feedback || "", // Allow empty review string
         reviewerUid: user.uid,
         reviewedUid: sessionToRate.partner.id,
       }
-      console.log("Submitting feedback:", feedbackData)
       
-      await apiClient.createFeedback(feedbackData)
-      console.log("Rating submitted successfully")
+      console.log("📤 Preparing to call API with feedbackData:", feedbackData)
+      console.log("📤 API endpoint: POST /api/feedbacks")
+      console.log("📤 Full URL will be: http://localhost:8080/SwapItBe/api/feedbacks")
       
-      // Refresh proposals to show updated data
+      // Wait for API call to complete successfully before doing anything else
+      const result = await apiClient.createFeedback(feedbackData)
+      console.log("✅ API call successful! Response:", result)
+      
+      // Only after successful API call:
+      // 1. Show success message
+      toast({
+        title: "Success",
+        description: "Your review has been submitted successfully!",
+        variant: "default",
+      })
+      
+      // 2. Refresh proposals to show updated data (this will trigger re-fetch)
       setRefreshKey((prev) => prev + 1)
+      
+      // 3. Close modal and clear session (modal will close via onOpenChange in RatingModal)
       setRatingModalOpen(false)
       setSessionToRate(null)
+      
+      console.log("=== DASHBOARD: handleSubmitRating END (SUCCESS) ===")
     } catch (error) {
-      console.error("Failed to submit rating:", error)
-      alert(`Failed to submit rating: ${error instanceof Error ? error.message : "Unknown error"}`)
+      console.error("❌ DASHBOARD: Failed to submit rating:", error)
+      const errorMessage = error instanceof Error ? error.message : "Unknown error"
+      toast({
+        title: "Error",
+        description: `Failed to submit rating: ${errorMessage}`,
+        variant: "destructive",
+      })
+      alert(`Failed to submit rating: ${errorMessage}`)
+      console.log("=== DASHBOARD: handleSubmitRating END (ERROR) ===")
+      throw error // Re-throw so modal can handle it
     }
   }
 
@@ -187,6 +253,7 @@ export function Dashboard() {
   // State for enriched proposals with user and skill data
   const [enrichedProposals, setEnrichedProposals] = useState<any[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
+  const [reviewersMap, setReviewersMap] = useState<Record<string, any>>({})
 
   // Enrich proposals with user and skill data
   useEffect(() => {
@@ -262,6 +329,39 @@ export function Dashboard() {
 
     enrichProposals()
   }, [sentProposals, receivedProposals, skills, user?.uid])
+
+  // Load reviewer information for received feedbacks
+  useEffect(() => {
+    if (!feedbacksReceived || !user) return
+
+    const loadReviewers = async () => {
+      const uniqueReviewerUids = new Set<string>()
+      feedbacksReceived
+        .filter((f: any) => f.reviewedUid === user.uid)
+        .forEach((f: any) => {
+          if (f.reviewerUid) uniqueReviewerUids.add(f.reviewerUid)
+        })
+
+      const reviewers: Record<string, any> = {}
+      await Promise.all(
+        Array.from(uniqueReviewerUids).map(async (uid) => {
+          try {
+            const reviewerData = await apiClient.getUserById(uid)
+            reviewers[uid] = {
+              uid: reviewerData.uid,
+              username: reviewerData.username,
+              profilePicture: normalizeProfilePicture(reviewerData.profilePicture),
+            }
+          } catch (e) {
+            console.error(`Failed to fetch reviewer ${uid}:`, e)
+          }
+        })
+      )
+      setReviewersMap(reviewers)
+    }
+
+    loadReviewers()
+  }, [feedbacksReceived, user?.uid])
 
   const upcomingProposals =
     enrichedProposals?.filter((p: any) => p.status === "ACCEPTED") || []
@@ -422,12 +522,6 @@ export function Dashboard() {
                             {formatDate(proposal.date)} at {formatTime(proposal.startTime)}
                           </div>
                         </div>
-                        <div className="flex gap-2">
-                          <Button size="sm">Join Session</Button>
-                          <Button size="sm" variant="outline">
-                            Message
-                          </Button>
-                        </div>
                       </div>
                     ))}
                   </div>
@@ -469,7 +563,10 @@ export function Dashboard() {
           </TabsContent>
 
           <TabsContent value="proposals">
-            <SwapProposals />
+            <SwapProposals onNavigateToChat={(userId: string) => {
+              setChatInitialUserId(userId)
+              setActiveTab('chat')
+            }} />
           </TabsContent>
 
           <TabsContent value="sessions">
@@ -529,15 +626,6 @@ export function Dashboard() {
                                   : "Date not available"}
                               </div>
                             </div>
-                            <div className="flex gap-2">
-                              <Button size="sm">Join Session</Button>
-                              <Button size="sm" variant="outline">
-                                Reschedule
-                              </Button>
-                              <Button size="sm" variant="outline">
-                                Message
-                              </Button>
-                            </div>
                           </div>
                         ))}
                       </div>
@@ -554,58 +642,64 @@ export function Dashboard() {
                       </div>
                     ) : (
                       <div className="space-y-4">
-                        {completedProposals.map((proposal: any) => (
-                          <div key={proposal.id} className="flex items-center gap-4 p-4 border rounded-lg bg-green-50">
-                            <Avatar className="w-12 h-12">
-                              <AvatarImage src={normalizeProfilePicture(proposal.receiver?.profilePicture) || "/placeholder.svg"} />
-                              <AvatarFallback>
-                                {proposal.receiver?.firstName?.[0] || proposal.receiver?.username?.[0] || ""}
-                                {proposal.receiver?.lastName?.[0] || ""}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div className="flex-1">
-                              <div className="font-medium">
-                                {proposal.receiver?.firstName && proposal.receiver?.lastName
-                                  ? `${proposal.receiver.firstName} ${proposal.receiver.lastName}`
-                                  : proposal.receiver?.username || "Unknown User"}
+                        {completedProposals.map((proposal: any) => {
+                          const hasRated = hasUserRatedProposal(proposal)
+                          return (
+                            <div key={proposal.id} className="flex items-center gap-4 p-4 border rounded-lg bg-green-50">
+                              <Avatar className="w-12 h-12">
+                                <AvatarImage src={normalizeProfilePicture(proposal.receiver?.profilePicture) || "/placeholder.svg"} />
+                                <AvatarFallback>
+                                  {proposal.receiver?.firstName?.[0] || proposal.receiver?.username?.[0] || ""}
+                                  {proposal.receiver?.lastName?.[0] || ""}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div className="flex-1">
+                                <div className="font-medium flex items-center gap-2">
+                                  {proposal.receiver?.firstName && proposal.receiver?.lastName
+                                    ? `${proposal.receiver.firstName} ${proposal.receiver.lastName}`
+                                    : proposal.receiver?.username || "Unknown User"}
+                                  {hasRated && (
+                                    <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" title="Review already submitted" />
+                                  )}
+                                </div>
+                                <div className="text-sm text-gray-600">
+                                  {proposal.offeredSkill?.label ? (
+                                    <>
+                                      Taught:{" "}
+                                      <span className="text-green-600 font-medium">{proposal.offeredSkill.label}</span>
+                                      {proposal.wantedSkill?.label && " • "}
+                                    </>
+                                  ) : null}
+                                  {proposal.wantedSkill?.label ? (
+                                    <>
+                                      Learned: <span className="text-blue-600 font-medium">{proposal.wantedSkill.label}</span>
+                                    </>
+                                  ) : null}
+                                  {!proposal.offeredSkill?.label && !proposal.wantedSkill?.label && "Session details"}
+                                </div>
+                                <div className="text-sm text-gray-500">
+                                  Completed on{" "}
+                                  {proposal.proposedDateTime
+                                    ? formatDate(proposal.proposedDateTime)
+                                    : proposal.date
+                                    ? formatDate(proposal.date)
+                                    : "Date not available"}
+                                </div>
                               </div>
-                              <div className="text-sm text-gray-600">
-                                {proposal.offeredSkill?.label ? (
-                                  <>
-                                    Taught:{" "}
-                                    <span className="text-green-600 font-medium">{proposal.offeredSkill.label}</span>
-                                    {proposal.wantedSkill?.label && " • "}
-                                  </>
-                                ) : null}
-                                {proposal.wantedSkill?.label ? (
-                                  <>
-                                    Learned: <span className="text-blue-600 font-medium">{proposal.wantedSkill.label}</span>
-                                  </>
-                                ) : null}
-                                {!proposal.offeredSkill?.label && !proposal.wantedSkill?.label && "Session details"}
+                              <div className="flex gap-2">
+                                {hasRated ? (
+                                  <Button size="sm" disabled>
+                                    Already Rated
+                                  </Button>
+                                ) : (
+                                  <Button size="sm" onClick={() => openRatingModal(proposal)}>                                                                      
+                                    Rate Session
+                                  </Button>
+                                )}
                               </div>
-                              <div className="text-sm text-gray-500">
-                                Completed on{" "}
-                                {proposal.proposedDateTime
-                                  ? formatDate(proposal.proposedDateTime)
-                                  : proposal.date
-                                  ? formatDate(proposal.date)
-                                  : "Date not available"}
-                              </div>
-                                                        </div>
-                            <div className="flex gap-2">
-                              {hasUserRatedProposal(proposal) ? (
-                                <Button size="sm" disabled>
-                                  Already Rated
-                                </Button>
-                              ) : (
-                                <Button size="sm" onClick={() => openRatingModal(proposal)}>                                                                      
-                                  Rate Session
-                                </Button>
-                              )}
                             </div>
-                          </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     )}
                   </div>
@@ -615,7 +709,7 @@ export function Dashboard() {
           </TabsContent>
 
           <TabsContent value="chat">
-            <ChatSection />
+            <ChatSection initialUserId={chatInitialUserId} />
           </TabsContent>
 
           <TabsContent value="profile">
@@ -628,52 +722,117 @@ export function Dashboard() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <TrendingUp className="w-5 h-5" />
-                    Storico dei tuoi match con review lasciate
+                    Your Completed Sessions with Reviews
                   </CardTitle>
-                  <CardDescription>Visualizza lo storico delle sessioni completate e le review che hai fornito</CardDescription>
+                  <CardDescription>View the history of completed sessions and reviews you have provided</CardDescription>
                 </CardHeader>
-                                <CardContent>
+                <CardContent>
                   <div className="space-y-3">
-                    {enrichedProposals?.filter((p: any) => p.status === "COMPLETED").length === 0 ? (                                                                   
+                    {!enrichedProposals || enrichedProposals.length === 0 ? (
+                      <div className="text-center py-8 text-gray-500">
+                        <CheckCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                        <p>Loading sessions...</p>
+                      </div>
+                    ) : enrichedProposals.filter((p: any) => p.status === "COMPLETED").length === 0 ? (                                                                   
                       <div className="text-center py-8 text-gray-500">
                         <CheckCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />                                                                           
-                        <p>Nessun match terminato trovato.</p>
+                        <p>No completed sessions found.</p>
                       </div>
                     ) : (
                       enrichedProposals
                         .filter((p: any) => p.status === "COMPLETED")
-                        .map((p: any) => (
-                                                    <div key={p.id} className="flex items-center gap-4 p-4 border rounded-lg bg-green-50">                                                
-                            <div className="flex-1">
-                              <div className="font-medium mb-1">
-                                Swap Deal Done with {p.receiver?.firstName && p.receiver?.lastName
-                                  ? `${p.receiver.firstName} ${p.receiver.lastName}`
-                                  : p.receiver?.username || "Unknown User"}
-                              </div>                                                                           
-                              <div className="text-gray-600 text-sm">
-                                Data: {formatDate(p.date)} | Orario: {formatTime(p.startTime)}
+                        .map((p: any) => {
+                          // Determine partner UID correctly
+                          const partnerUid = p.isSent ? p.offerUser?.uid : p.requestUser?.uid
+                          
+                          // Find feedback where current user is the reviewer and partner is the reviewed
+                          const userFeedback = feedbacksGiven?.find((f: any) => {
+                            // Current user must be the reviewer, partner must be the reviewed
+                            return f.reviewerUid === user?.uid && f.reviewedUid === partnerUid && partnerUid
+                          })
+                          
+                          const hasReviewed = !!userFeedback
+                          
+                          // Debug logging
+                          console.log('Review History - Proposal:', {
+                            id: p.id,
+                            partnerUid,
+                            userUid: user?.uid,
+                            isSent: p.isSent,
+                            offerUserUid: p.offerUser?.uid,
+                            requestUserUid: p.requestUser?.uid,
+                            feedbacksGivenCount: feedbacksGiven?.length || 0,
+                            hasReviewed,
+                            userFeedback: userFeedback ? {
+                              id: userFeedback.id,
+                              rating: userFeedback.rating,
+                              review: userFeedback.review,
+                              reviewerUid: userFeedback.reviewerUid,
+                              reviewedUid: userFeedback.reviewedUid
+                            } : null,
+                            allFeedbacksGiven: feedbacksGiven
+                          })
+                          
+                          return (
+                            <div key={p.id} className="flex items-center gap-4 p-4 border rounded-lg bg-green-50">                                                
+                              <div className="flex-1">
+                                <div className="font-medium mb-1 flex items-center gap-2">
+                                  Swap Deal Done with {p.receiver?.firstName && p.receiver?.lastName
+                                    ? `${p.receiver.firstName} ${p.receiver.lastName}`
+                                    : p.receiver?.username || "Unknown User"}
+                                  {hasReviewed && (
+                                    <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" title="Review already submitted" />
+                                  )}
+                                </div>                                                                           
+                                <div className="text-gray-600 text-sm">
+                                  Date: {formatDate(p.date)} | Time: {formatTime(p.startTime)}
+                                </div>
+                                {p.skillOffered?.label && (
+                                  <div className="text-sm text-gray-600 mt-1">
+                                    Taught: <span className="font-medium text-green-600">{p.skillOffered.label}</span>
+                                    {p.skillRequested?.label && (
+                                      <> • Learned: <span className="font-medium text-blue-600">{p.skillRequested.label}</span></>
+                                    )}
+                                  </div>
+                                )}
                               </div>
-                            </div>
-                                                        <div className="flex flex-col items-end gap-1">     
-                              {/* Review che hai lasciato (se disponibile) */}  
-                              {(() => {
-                                const partnerUid = p.isSent ? p.offerUser?.uid : p.requestUser?.uid
-                                const userFeedback = feedbacksGiven?.find((f: any) => 
-                                  f.reviewerUid === user?.uid && f.reviewedUid === partnerUid
-                                )
-                                
-                                return userFeedback ? (
-                                  <div key={userFeedback.id} className="bg-white p-2 rounded shadow text-sm text-gray-800">                                              
-                                    <div><span className="font-semibold">La tua recensione:</span> {userFeedback.review}</div>
-                                    <div>Rating: {userFeedback.rating}/5</div>
+                              <div className="flex flex-col items-end gap-1 min-w-[250px]">     
+                                {userFeedback ? (
+                                  <div key={userFeedback.id} className="bg-white p-4 rounded-lg shadow-md text-sm text-gray-800 border border-gray-200 w-full">                                              
+                                    <div className="flex items-center gap-2 mb-2">
+                                      <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" />
+                                      <span className="font-semibold">Your Review</span>
+                                    </div>
+                                    {/* Rating Stars */}
+                                    <div className="flex items-center gap-1 mb-2">
+                                      {[1, 2, 3, 4, 5].map((star) => (
+                                        <Star
+                                          key={star}
+                                          className={`w-4 h-4 ${
+                                            star <= (userFeedback.rating || 0)
+                                              ? "text-yellow-500 fill-yellow-500"
+                                              : "text-gray-300"
+                                          }`}
+                                        />
+                                      ))}
+                                      <span className="ml-2 text-xs text-gray-600">({userFeedback.rating || 0}/5)</span>
+                                    </div>
+                                    {/* Review Text */}
+                                    {userFeedback.review ? (
+                                      <div className="text-gray-700 mb-1 p-2 bg-gray-50 rounded border border-gray-200">
+                                        {userFeedback.review}
+                                      </div>
+                                    ) : (
+                                      <div className="text-xs text-gray-400 italic mb-1">No review text provided</div>
+                                    )}
                                   </div>
                                 ) : (
-                                  <div className="text-xs text-gray-500">Nessuna review fornita</div>
-                                )
-                              })()}
+                                  <div className="text-xs text-gray-500 italic">No review provided yet</div>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        ))
+                          )
+                        })
                     )}
                   </div>
                 </CardContent>
@@ -682,28 +841,61 @@ export function Dashboard() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Star className="w-5 h-5" />
-                    Recensioni ricevute sulle tue skill
+                    Reviews Received on Your Skills
                   </CardTitle>
-                  <CardDescription>Visualizza il feedback che hai ricevuto dagli altri utenti per ciascuna delle tue skill offerte</CardDescription>
+                  <CardDescription>View the feedback you have received from other users for each of your offered skills</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-3">
                     {feedbacksReceived?.filter((f: any) => f.reviewedUid === user.uid).length === 0 ? (
                       <div className="text-center py-8 text-gray-500">
                         <Star className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                        <p>Nessuna review ricevuta.</p>
+                        <p>No reviews received.</p>
                       </div>
                     ) : (
                       feedbacksReceived
                         .filter((f: any) => f.reviewedUid === user.uid)
-                        .map((f: any) => (
-                          <div key={f.id} className="flex flex-col gap-1 p-3 border rounded bg-yellow-50">
-                            <div>
-                              <span className="font-medium">Recensione:</span> {f.review}
+                        .map((f: any) => {
+                          // Get reviewer info from reviewersMap (loaded from backend)
+                          const reviewer = reviewersMap[f.reviewerUid]
+                          
+                          return (
+                            <div key={f.id} className="flex flex-col gap-2 p-4 border rounded-lg bg-yellow-50 shadow-sm">
+                              <div className="font-medium text-sm mb-1 flex items-center gap-2">
+                                From: {reviewer?.username || "Unknown User"}
+                                {reviewer?.profilePicture && (
+                                  <Avatar className="w-6 h-6">
+                                    <AvatarImage src={reviewer.profilePicture} />
+                                    <AvatarFallback>{reviewer.username?.[0] || "U"}</AvatarFallback>
+                                  </Avatar>
+                                )}
+                              </div>
+                              {/* Rating Stars */}
+                              <div className="flex items-center gap-1">
+                                {[1, 2, 3, 4, 5].map((star) => (
+                                  <Star
+                                    key={star}
+                                    className={`w-4 h-4 ${
+                                      star <= (f.rating || 0)
+                                        ? "text-yellow-500 fill-yellow-500"
+                                        : "text-gray-300"
+                                    }`}
+                                  />
+                                ))}
+                                <span className="ml-2 text-xs text-gray-600">({f.rating || 0}/5)</span>
+                              </div>
+                              {/* Review Text */}
+                              {f.review ? (
+                                <div className="text-gray-700 p-2 bg-white rounded border border-gray-200">
+                                  <span className="font-medium text-xs text-gray-500">Review:</span>
+                                  <div className="mt-1">{f.review}</div>
+                                </div>
+                              ) : (
+                                <div className="text-xs text-gray-400 italic">No review text provided</div>
+                              )}
                             </div>
-                            <div>Rating: {f.rating}/5</div>
-                          </div>
-                        ))
+                          )
+                        })
                     )}
                   </div>
                 </CardContent>
@@ -717,13 +909,37 @@ export function Dashboard() {
           <RatingModal
             open={ratingModalOpen}
             onOpenChange={(open) => {
-              setRatingModalOpen(open)
+              // Allow closing only if user explicitly closes (clicking X or Cancel)
+              // The modal will be closed programmatically after successful submission in handleSubmitRating
               if (!open) {
+                setRatingModalOpen(false)
                 setSessionToRate(null)
               }
             }}
             session={sessionToRate}
-            onSubmitRating={handleSubmitRating}
+            onSubmitRating={async (rating: number, feedback: string) => {
+              console.log("🔗🔗🔗 RatingModal onSubmitRating callback called directly")
+              console.log("  Rating received:", rating)
+              console.log("  Feedback received:", feedback)
+              console.log("  handleSubmitRating function:", handleSubmitRating)
+              console.log("  handleSubmitRating type:", typeof handleSubmitRating)
+              console.log("  About to call handleSubmitRating with:", { rating, feedback })
+              
+              if (typeof handleSubmitRating !== 'function') {
+                console.error("❌ handleSubmitRating is not a function!")
+                throw new Error("handleSubmitRating is not a function")
+              }
+              
+              try {
+                console.log("  Calling handleSubmitRating now...")
+                const result = await handleSubmitRating(rating, feedback)
+                console.log("  ✅ handleSubmitRating returned:", result)
+                return result
+              } catch (error) {
+                console.error("  ❌ handleSubmitRating threw error:", error)
+                throw error
+              }
+            }}
           />
         )}
 

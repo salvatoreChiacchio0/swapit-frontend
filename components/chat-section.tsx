@@ -138,7 +138,11 @@ interface Conversation {
   messages: ChatMessage[];
 }
 
-export function ChatSection() {
+interface ChatSectionProps {
+  initialUserId?: string | null;
+}
+
+export function ChatSection({ initialUserId }: ChatSectionProps = {}) {
   // Auth Firebase
   const [idToken, setIdToken] = useState<string|null>(null);
   const [userId, setUserId] = useState<string|null>(null);
@@ -248,6 +252,58 @@ export function ChatSection() {
       })
       .catch(() => { setAllUsers([]); setUsersById({}); });
   }, [idToken, userId]);
+
+  // Seleziona automaticamente l'utente quando initialUserId è fornito
+  useEffect(() => {
+    if (!initialUserId) return;
+    
+    // Se l'utente è già stato caricato
+    if (usersById[initialUserId]) {
+      const user = usersById[initialUserId];
+      const existing = conversations.find(c => c.userId === initialUserId);
+      if (existing) {
+        setSelectedConversation(existing);
+        setMessages(existing.messages);
+        setSelectedUser(user);
+      } else {
+        // Crea una nuova conversazione anche se non ci sono ancora messaggi
+        const newConv: Conversation = { userId: initialUserId, messages: [] };
+        setConversations(prev => {
+          // Evita duplicati
+          if (prev.find(c => c.userId === initialUserId)) return prev;
+          return [...prev, newConv];
+        });
+        setSelectedConversation(newConv);
+        setMessages([]);
+        setSelectedUser(user);
+      }
+    } else if (Object.keys(usersById).length > 0) {
+      // Se gli utenti sono stati caricati ma questo utente non esiste, prova a caricarlo
+      apiClient.getUserById(initialUserId)
+        .then(user => {
+          const userData = { uid: user.uid, username: user.username, profilePicture: user.profilePicture };
+          setUsersById(prev => ({ ...prev, [initialUserId]: userData }));
+          const existing = conversations.find(c => c.userId === initialUserId);
+          if (existing) {
+            setSelectedConversation(existing);
+            setMessages(existing.messages);
+            setSelectedUser(userData);
+          } else {
+            const newConv: Conversation = { userId: initialUserId, messages: [] };
+            setConversations(prev => {
+              if (prev.find(c => c.userId === initialUserId)) return prev;
+              return [...prev, newConv];
+            });
+            setSelectedConversation(newConv);
+            setMessages([]);
+            setSelectedUser(userData);
+          }
+        })
+        .catch(() => {
+          // Utente non trovato, ignora
+        });
+    }
+  }, [initialUserId, usersById, conversations]);
 
   // Refetch utility per riconnessioni
   const refetchChats = async () => {

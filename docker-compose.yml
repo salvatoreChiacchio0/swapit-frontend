@@ -10,7 +10,13 @@ services:
       - NODE_ENV=production
       - PORT=3000
     restart: unless-stopped
+    networks:
+      - swapit-network
 
+networks:
+  swapit-network:
+    external: true
+    name: swapit_network
 
 
 

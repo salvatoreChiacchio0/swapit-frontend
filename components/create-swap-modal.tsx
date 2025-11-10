@@ -52,12 +52,40 @@ export function CreateSwapModal({ open, onOpenChange, targetUser }: CreateSwapMo
     setIsSubmitting(true)
     if (!allSkills) return
 
+    // Validazione: duration deve essere valida e endTime deve essere maggiore di startTime
+    if (proposedTime && duration) {
+      const calculatedEndTime = calculateEndTime(proposedTime, duration)
+      if (!calculatedEndTime) {
+        toast({ 
+          title: "Errore", 
+          description: "Durata non valida. Seleziona una durata valida.", 
+          variant: "destructive" 
+        })
+        setIsSubmitting(false)
+        return
+      }
+      
+      // Verifica che endTime sia maggiore di startTime
+      const start = new Date(`2000-01-01T${proposedTime}:00`)
+      const end = new Date(`2000-01-01T${calculatedEndTime}`)
+      if (end <= start) {
+        toast({ 
+          title: "Errore", 
+          description: "L'orario di fine deve essere maggiore dell'orario di inizio.", 
+          variant: "destructive" 
+        })
+        setIsSubmitting(false)
+        return
+      }
+    }
+
     // Trova gli ID delle skill dai label
     const skillOffered = allSkills.find(s => s.label === selectedSkillToOffer)
     const skillRequested = allSkills.find(s => s.label === selectedSkillToLearn)
 
     if (!skillOffered || !skillRequested) {
       console.error("Skills not found")
+      setIsSubmitting(false)
       return
     }
 

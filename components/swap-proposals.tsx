@@ -169,7 +169,11 @@ const mockProposals: any[] = [
   },
 ]
 
-export function SwapProposals() {
+interface SwapProposalsProps {
+  onNavigateToChat?: (userId: string) => void;
+}
+
+export function SwapProposals({ onNavigateToChat }: SwapProposalsProps = {}) {
   const { user } = useAuth()
   const [refreshKey, setRefreshKey] = useState(0)
 
@@ -386,11 +390,49 @@ export function SwapProposals() {
   }
 
   // Handle rating submission
-  const handleRatingSubmitted = (rating: number, feedback: string) => {
-    setRatingModalOpen(false)
-    setProposalToRate(null)
-    // Refresh to show updated feedback status
-    setRefreshKey((prev) => prev + 1)
+  const handleRatingSubmitted = async (rating: number, feedback: string) => {
+    console.log("=== SWAP-PROPOSALS: handleRatingSubmitted START ===")
+    console.log("Rating:", rating)
+    console.log("Feedback:", feedback)
+    console.log("Proposal to rate:", proposalToRate)
+    
+    if (!user || !proposalToRate) {
+      console.error("❌ Missing user or proposalToRate")
+      throw new Error("Missing user or proposal to rate")
+    }
+    
+    // Get partner UID
+    const partnerUid = getPartnerUid(proposalToRate)
+    if (!partnerUid) {
+      console.error("❌ Could not determine partner UID")
+      throw new Error("Could not determine partner UID")
+    }
+    
+    try {
+      const feedbackData = {
+        rating: rating,
+        review: feedback || "",
+        reviewerUid: user.uid,
+        reviewedUid: partnerUid,
+      }
+      
+      console.log("📤 Preparing to call API with feedbackData:", feedbackData)
+      console.log("📤 API endpoint: POST /api/feedbacks")
+      
+      const result = await apiClient.createFeedback(feedbackData)
+      console.log("✅ API call successful! Response:", result)
+      
+      // Only close modal and refresh after successful API call
+      setRatingModalOpen(false)
+      setProposalToRate(null)
+      setRefreshKey((prev) => prev + 1)
+      
+      console.log("=== SWAP-PROPOSALS: handleRatingSubmitted END (SUCCESS) ===")
+    } catch (error) {
+      console.error("❌ SWAP-PROPOSALS: Failed to submit rating:", error)
+      // Don't close modal on error - let user retry
+      throw error
+    }
   }
 
   // Open the mark as completed dialog
@@ -575,7 +617,15 @@ export function SwapProposals() {
                           <X className="w-4 h-4 mr-2" />
                           Decline
                         </Button>
-                        <Button variant="ghost" className="w-full">
+                        <Button 
+                          variant="ghost" 
+                          className="w-full"
+                          onClick={() => {
+                            if (onNavigateToChat && proposal.fromUser?.uid) {
+                              onNavigateToChat(proposal.fromUser.uid)
+                            }
+                          }}
+                        >
                           <MessageSquare className="w-4 h-4 mr-2" />
                           Message
                         </Button>
@@ -584,10 +634,6 @@ export function SwapProposals() {
 
                                         {proposal.status === "ACCEPTED" && (
                       <div className="flex flex-col gap-2 lg:w-48">
-                        <Button className="w-full">
-                          <Calendar className="w-4 h-4 mr-2" />
-                          Join Session
-                        </Button>
                         <Button
                           variant="outline"
                           className="w-full bg-transparent"
@@ -690,7 +736,15 @@ export function SwapProposals() {
                       {proposal.status === "PENDING" && (
                         <>
                           <div className="text-center text-sm text-gray-600 mb-2">Waiting for response...</div>                                                 
-                          <Button variant="outline" className="w-full bg-transparent">                                                                          
+                          <Button 
+                            variant="outline" 
+                            className="w-full bg-transparent"
+                            onClick={() => {
+                              if (onNavigateToChat && proposal.toUser?.uid) {
+                                onNavigateToChat(proposal.toUser.uid)
+                              }
+                            }}
+                          >                                                                          
                             <MessageSquare className="w-4 h-4 mr-2" />
                             Message
                           </Button>
@@ -699,10 +753,6 @@ export function SwapProposals() {
 
                       {proposal.status === "ACCEPTED" && (
                         <>
-                          <Button className="w-full">
-                            <Calendar className="w-4 h-4 mr-2" />
-                            Join Session
-                          </Button>
                           <Button
                             variant="outline"
                             className="w-full bg-transparent"
