@@ -12,7 +12,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { useAuth } from "@/hooks/use-auth"
-import { apiClient, useApiCall } from "@/lib/api"
+import { apiClient, useApiCall, type SkillOffered, type SkillDesired } from "@/lib/api"
 import { CalendarIcon, Clock, User, MessageSquare, Target, BookOpen } from "lucide-react"
 import { format } from "date-fns"
 import { toast } from "@/hooks/use-toast"
@@ -32,8 +32,8 @@ interface CreateSwapModalProps {
 
 export function CreateSwapModal({ open, onOpenChange, targetUser }: CreateSwapModalProps) {
   const { user } = useAuth()
-  const [selectedSkillToOffer, setSelectedSkillToOffer] = useState("")
-  const [selectedSkillToLearn, setSelectedSkillToLearn] = useState("")
+  const [selectedSkillToOfferId, setSelectedSkillToOfferId] = useState<number | null>(null)
+  const [selectedSkillToLearnId, setSelectedSkillToLearnId] = useState<number | null>(null)
   const [selectedUser, setSelectedUser] = useState(targetUser?.id || "")
   const [proposedDate, setProposedDate] = useState<Date>()
   const [proposedTime, setProposedTime] = useState("")
@@ -44,13 +44,19 @@ export function CreateSwapModal({ open, onOpenChange, targetUser }: CreateSwapMo
 
   // Fetch real users and skills from API
   const { data: allUsers, loading: usersLoading } = useApiCall(() => apiClient.getUsers(), [])
-  const { data: allSkills, loading: skillsLoading } = useApiCall(() => apiClient.getSkills(), [])
+  const { data: userSkillsOffered, loading: skillsOfferedLoading } = useApiCall(
+    () => (user ? apiClient.getSkillsOfferedByUser(user.uid) : Promise.resolve([])),
+    [user?.uid]
+  )
+  const { data: userSkillsDesired, loading: skillsDesiredLoading } = useApiCall(
+    () => (user ? apiClient.getSkillsDesiredByUser(user.uid) : Promise.resolve([])),
+    [user?.uid]
+  )
 
   if (!user) return null
 
   const handleSubmit = async () => {
     setIsSubmitting(true)
-    if (!allSkills) return
 
     // Validazione: duration deve essere valida e endTime deve essere maggiore di startTime
     if (proposedTime && duration) {
@@ -79,12 +85,13 @@ export function CreateSwapModal({ open, onOpenChange, targetUser }: CreateSwapMo
       }
     }
 
-    // Trova gli ID delle skill dai label
-    const skillOffered = allSkills.find(s => s.label === selectedSkillToOffer)
-    const skillRequested = allSkills.find(s => s.label === selectedSkillToLearn)
-
-    if (!skillOffered || !skillRequested) {
-      console.error("Skills not found")
+    // Verifica che le skill siano selezionate
+    if (!selectedSkillToOfferId || !selectedSkillToLearnId) {
+      toast({ 
+        title: "Errore", 
+        description: "Seleziona entrambe le skill da scambiare.", 
+        variant: "destructive" 
+      })
       setIsSubmitting(false)
       return
     }
@@ -92,8 +99,8 @@ export function CreateSwapModal({ open, onOpenChange, targetUser }: CreateSwapMo
     const swapProposal = {
       requestUserUid: user.uid,
       offerUserUid: selectedUser,
-      skillOfferedId: skillOffered.id,
-      skillRequestedId: skillRequested.id,
+      skillOfferedId: selectedSkillToOfferId,
+      skillRequestedId: selectedSkillToLearnId,
       date: proposedDate?.toISOString().split("T")[0] as string,
       startTime: proposedTime + ":00", // Aggiungi secondi
       endTime: calculateEndTime(proposedTime, duration),
@@ -123,8 +130,8 @@ export function CreateSwapModal({ open, onOpenChange, targetUser }: CreateSwapMo
   }
 
   const resetForm = () => {
-    setSelectedSkillToOffer("")
-    setSelectedSkillToLearn("")
+    setSelectedSkillToOfferId(null)
+    setSelectedSkillToLearnId(null)
     setSelectedUser(targetUser?.id || "")
     setProposedDate(undefined)
     setProposedTime("")
@@ -134,7 +141,7 @@ export function CreateSwapModal({ open, onOpenChange, targetUser }: CreateSwapMo
   }
 
   const getMatchingUsers = () => {
-    if (!selectedSkillToOffer || !selectedSkillToLearn || !allUsers) return []
+    if (!selectedSkillToOfferId || !selectedSkillToLearnId || !allUsers) return []
 
     // Filter users who have the skill we want to learn and want the skill we offer
     return allUsers.filter((apiUser) => {
@@ -142,6 +149,20 @@ export function CreateSwapModal({ open, onOpenChange, targetUser }: CreateSwapMo
       // For now, return all users except current user
       return apiUser.uid !== user.uid
     })
+  }
+
+  // Helper per ottenere il label di una skill offerta
+  const getSkillOfferedLabel = (skillId: number | null): string => {
+    if (!skillId || !userSkillsOffered) return ""
+    const skill = userSkillsOffered.find(so => so.skill.id === skillId)
+    return skill?.skill.label || ""
+  }
+
+  // Helper per ottenere il label di una skill desiderata
+  const getSkillDesiredLabel = (skillId: number | null): string => {
+    if (!skillId || !userSkillsDesired) return ""
+    const skill = userSkillsDesired.find(sd => sd.skill.id === skillId)
+    return skill?.skill.label || ""
   }
 
   const selectedUserData = allUsers?.find((u) => u.uid === selectedUser)
@@ -169,14 +190,17 @@ export function CreateSwapModal({ open, onOpenChange, targetUser }: CreateSwapMo
                     <Target className="w-4 h-4 text-green-600" />
                     Skill You'll Teach
                   </Label>
-                  <Select value={selectedSkillToOffer} onValueChange={setSelectedSkillToOffer}>
+                  <Select 
+                    value={selectedSkillToOfferId?.toString() || ""} 
+                    onValueChange={(value) => setSelectedSkillToOfferId(value ? Number(value) : null)}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="Select a skill you can teach" />
                     </SelectTrigger>
                     <SelectContent>
-                      {user.skillsOffered.map((skill) => (
-                        <SelectItem key={skill} value={skill}>
-                          {skill}
+                      {userSkillsOffered?.map((skillOffered) => (
+                        <SelectItem key={skillOffered.id} value={skillOffered.skill.id.toString()}>
+                          {skillOffered.skill.label}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -188,14 +212,17 @@ export function CreateSwapModal({ open, onOpenChange, targetUser }: CreateSwapMo
                     <BookOpen className="w-4 h-4 text-blue-600" />
                     Skill You Want to Learn
                   </Label>
-                  <Select value={selectedSkillToLearn} onValueChange={setSelectedSkillToLearn}>
+                  <Select 
+                    value={selectedSkillToLearnId?.toString() || ""} 
+                    onValueChange={(value) => setSelectedSkillToLearnId(value ? Number(value) : null)}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="Select a skill you want to learn" />
                     </SelectTrigger>
                     <SelectContent>
-                      {user.skillsWanted.map((skill) => (
-                        <SelectItem key={skill} value={skill}>
-                          {skill}
+                      {userSkillsDesired?.map((skillDesired) => (
+                        <SelectItem key={skillDesired.id} value={skillDesired.skill.id.toString()}>
+                          {skillDesired.skill.label}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -203,21 +230,21 @@ export function CreateSwapModal({ open, onOpenChange, targetUser }: CreateSwapMo
                 </div>
               </div>
 
-              {selectedSkillToOffer && selectedSkillToLearn && (
+              {selectedSkillToOfferId && selectedSkillToLearnId && (
                 <div className="p-4 bg-blue-50 rounded-lg">
                   <div className="flex items-center gap-2 text-blue-800 font-medium mb-2">
                     <Target className="w-4 h-4" />
                     Skill Exchange Summary
                   </div>
                   <div className="text-sm text-blue-700">
-                    You'll teach <span className="font-medium text-green-700">{selectedSkillToOffer}</span> in exchange
-                    for learning <span className="font-medium text-blue-700">{selectedSkillToLearn}</span>
+                    You'll teach <span className="font-medium text-green-700">{getSkillOfferedLabel(selectedSkillToOfferId)}</span> in exchange
+                    for learning <span className="font-medium text-blue-700">{getSkillDesiredLabel(selectedSkillToLearnId)}</span>
                   </div>
                 </div>
               )}
 
               <div className="flex justify-end">
-                <Button onClick={() => setStep(2)} disabled={!selectedSkillToOffer || !selectedSkillToLearn}>
+                <Button onClick={() => setStep(2)} disabled={!selectedSkillToOfferId || !selectedSkillToLearnId}>
                   Next: Find Partners
                 </Button>
               </div>
@@ -275,11 +302,11 @@ export function CreateSwapModal({ open, onOpenChange, targetUser }: CreateSwapMo
                     <div className="space-y-3">
                       {getMatchingUsers().map((matchUser) => (
                         <div
-                          key={matchUser.id}
+                          key={matchUser.uid}
                           className={`p-4 border rounded-lg cursor-pointer transition-colors ${
-                            selectedUser === matchUser.id ? "border-blue-500 bg-blue-50" : "hover:bg-gray-50"
+                            selectedUser === matchUser.uid ? "border-blue-500 bg-blue-50" : "hover:bg-gray-50"
                           }`}
-                          onClick={() => setSelectedUser(matchUser.id)}
+                          onClick={() => setSelectedUser(matchUser.uid)}
                         >
                           <div className="flex items-center gap-3">
                             <Avatar className="w-12 h-12">
@@ -302,9 +329,9 @@ export function CreateSwapModal({ open, onOpenChange, targetUser }: CreateSwapMo
                                 <Badge variant="secondary">{matchUser.rating} ⭐</Badge>
                               </div>
                               <div className="text-sm text-gray-600">
-                                Can teach: <span className="font-medium text-green-600">{selectedSkillToLearn}</span> •
+                                Can teach: <span className="font-medium text-green-600">{getSkillDesiredLabel(selectedSkillToLearnId)}</span> •
                                 Wants to learn:{" "}
-                                <span className="font-medium text-blue-600">{selectedSkillToOffer}</span>
+                                <span className="font-medium text-blue-600">{getSkillOfferedLabel(selectedSkillToOfferId)}</span>
                               </div>
                             </div>
                           </div>
@@ -353,7 +380,7 @@ export function CreateSwapModal({ open, onOpenChange, targetUser }: CreateSwapMo
                     <div>
                       <div className="font-medium">{selectedUserData.name}</div>
                       <div className="text-sm text-gray-600">
-                        {selectedSkillToOffer} ↔ {selectedSkillToLearn}
+                        {getSkillOfferedLabel(selectedSkillToOfferId)} ↔ {getSkillDesiredLabel(selectedSkillToLearnId)}
                       </div>
                     </div>
                   </div>
