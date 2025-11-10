@@ -317,10 +317,7 @@ export function Dashboard() {
             <span className="text-xl font-bold text-gray-900">SwapIt</span>
           </div>
           <div className="flex items-center gap-4">
-            <Button onClick={() => setCreateSwapModalOpen(true)} className="bg-blue-600 hover:bg-blue-700">
-              <Plus className="w-4 h-4 mr-2" />
-              Create Swap
-            </Button>
+
             <div className="flex items-center gap-2">
               <Avatar className="w-8 h-8">
                 <AvatarImage src={normalizeProfilePicture(user.profilePicture) || "/placeholder.svg"} />
